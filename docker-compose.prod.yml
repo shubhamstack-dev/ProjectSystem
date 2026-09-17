@@ -1,0 +1,54 @@
+# PRODUCTION compose - use on the VPS.
+#   docker compose -f docker-compose.prod.yml up -d --build
+# Needs a .env file next to it with MYSQL_PASSWORD and DOMAIN (see .env.prod.example).
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ps-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: projectsystem
+    # NO "ports:" here on purpose - the database is reachable only from the other containers, never from the internet.
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build: ./backend
+    container_name: ps-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "mysql+pymysql://root:${MYSQL_PASSWORD_URLENC}@mysql:3306/projectsystem"
+      CORS_ORIGINS: "https://${DOMAIN},https://www.${DOMAIN}"
+    # no "ports:" - only the web container talks to it
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: ps-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data        # HTTPS certificates live here - keep this volume
+      - caddy_config:/config
+
+volumes:
+  mysql_data:
+  caddy_data:
+  caddy_config:
