@@ -34,6 +34,7 @@ class RoleIn(Camel):
     colour: str = "#2F6F9E"
     views: list[str] = Field(default_factory=lambda: ["portfolio", "plan", "assign", "miles"])
     organisation_id: Optional[int] = None
+    is_customer: bool = False
 
 
 class RoleOut(Camel):
@@ -45,6 +46,7 @@ class RoleOut(Camel):
     organisation_name: Optional[str]
     views: list[str]
     people_count: int
+    is_customer: bool
 
 
 class PersonIn(Camel):
@@ -231,3 +233,76 @@ class AuditOut(Camel):
     project_code: Optional[str]
     project_id: Optional[int]
     detail: Optional[str]
+
+
+# ---- phases (roles & responsibilities per phase) ----------------------------
+class PhaseAssignmentIn(Camel):
+    role_id: int
+    person_id: int
+    notes: Optional[str] = None
+
+
+class PhaseAssignmentOut(Camel):
+    id: int
+    role_id: int
+    role_name: str
+    role_colour: str
+    responsibilities: Optional[str]
+    person_id: int
+    person_name: str
+    notes: Optional[str]
+
+
+class PhaseIn(Camel):
+    name: str
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    colour: str = "#2F6F9E"
+
+
+class PhaseOut(Camel):
+    id: int
+    project_id: int
+    sequence: int
+    name: str
+    start_date: Optional[date]
+    end_date: Optional[date]
+    colour: str
+    assignments: list[PhaseAssignmentOut]
+
+
+# ---- customer portal --------------------------------------------------------
+class CustomerProjectOut(Camel):
+    id: int
+    code: str
+    name: str
+    status: str
+    percent_complete: int
+    planned_start: date
+    planned_end: Optional[date]
+    forecast_finish: Optional[date]
+    end_variance_days: Optional[int]
+    organisation_name: Optional[str]
+    pending_count: int
+
+
+class ApprovalLineOut(Camel):
+    activity_id: int
+    wbs: str
+    kind: str
+    name: str
+    planned_start: date
+    planned_finish: date
+    actual_start: Optional[date]
+    actual_finish: Optional[date]
+    percent_complete: int
+    approval_status: str            # Pending / Approved / Rejected
+    comment: Optional[str]
+    submitted_by: Optional[str]
+    submitted_at_utc: Optional[datetime]
+    decided_by: Optional[str]
+    decided_at_utc: Optional[datetime]
+
+
+class DecisionIn(Camel):
+    comment: Optional[str] = None

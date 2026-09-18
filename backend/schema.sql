@@ -120,3 +120,48 @@ CREATE TABLE IF NOT EXISTS audit_entry (
   KEY ix_audit_time (TimestampUtc),
   KEY ix_audit_project (ProjectId)
 ) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------------
+-- v1.1: customer roles, project phases, and line-item date approvals
+-- (The backend also applies these automatically at startup.)
+-- ---------------------------------------------------------------------------
+ALTER TABLE role ADD COLUMN IsCustomer TINYINT NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS phase (
+  Id        INT AUTO_INCREMENT PRIMARY KEY,
+  ProjectId INT NOT NULL,
+  Sequence  INT NOT NULL DEFAULT 0,
+  Name      VARCHAR(120) NOT NULL,
+  StartDate DATE NULL,
+  EndDate   DATE NULL,
+  Colour    VARCHAR(9) NOT NULL DEFAULT '#2F6F9E',
+  KEY ix_phase_project (ProjectId, Sequence),
+  CONSTRAINT fk_phase_project FOREIGN KEY (ProjectId) REFERENCES project(Id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS phase_assignment (
+  Id       INT AUTO_INCREMENT PRIMARY KEY,
+  PhaseId  INT NOT NULL,
+  RoleId   INT NOT NULL,
+  PersonId INT NOT NULL,
+  Notes    VARCHAR(500) NULL,
+  UNIQUE KEY ux_phase_assign (PhaseId, RoleId, PersonId),
+  CONSTRAINT fk_pa_phase  FOREIGN KEY (PhaseId)  REFERENCES phase(Id)  ON DELETE CASCADE,
+  CONSTRAINT fk_pa_role   FOREIGN KEY (RoleId)   REFERENCES role(Id)   ON DELETE CASCADE,
+  CONSTRAINT fk_pa_person FOREIGN KEY (PersonId) REFERENCES person(Id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS date_approval (
+  Id             INT AUTO_INCREMENT PRIMARY KEY,
+  ActivityId     INT NOT NULL,
+  ActualStart    DATE NULL,
+  ActualFinish   DATE NULL,
+  Status         VARCHAR(10) NOT NULL DEFAULT 'Pending',
+  Comment        VARCHAR(500) NULL,
+  SubmittedBy    VARCHAR(120) NOT NULL DEFAULT '',
+  SubmittedAtUtc DATETIME NULL,
+  DecidedBy      VARCHAR(120) NULL,
+  DecidedAtUtc   DATETIME NULL,
+  UNIQUE KEY ux_approval_activity (ActivityId),
+  CONSTRAINT fk_da_activity FOREIGN KEY (ActivityId) REFERENCES activity(Id) ON DELETE CASCADE
+) ENGINE=InnoDB;

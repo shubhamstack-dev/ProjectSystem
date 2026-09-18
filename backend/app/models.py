@@ -38,6 +38,7 @@ class Role(Base):
     colour: Mapped[str] = mapped_column("Colour", String(9), nullable=False, default="#2F6F9E")
     view_access: Mapped[str] = mapped_column("ViewAccess", String(200), nullable=False,
                                              default="portfolio,plan,assign,miles")
+    is_customer: Mapped[int] = mapped_column("IsCustomer", Integer, nullable=False, default=0)
     organisation_id: Mapped[int | None] = mapped_column("OrganisationId", ForeignKey("organisation.Id", ondelete="SET NULL"))
 
     organisation: Mapped[Organisation | None] = relationship(back_populates="roles")
@@ -176,3 +177,57 @@ class AuditEntry(Base):
     project_id: Mapped[int | None] = mapped_column("ProjectId", Integer)
     activity_id: Mapped[int | None] = mapped_column("ActivityId", Integer)
     detail: Mapped[str | None] = mapped_column("Detail", Text)
+
+
+class Phase(Base):
+    """A named stage of one project (e.g. Design, Build, Commissioning).
+    Roles and their responsibilities are assigned to team members per phase."""
+    __tablename__ = "phase"
+    __table_args__ = (Index("ix_phase_project", "ProjectId", "Sequence"),)
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column("ProjectId", ForeignKey("project.Id", ondelete="CASCADE"), nullable=False)
+    sequence: Mapped[int] = mapped_column("Sequence", Integer, nullable=False, default=0)
+    name: Mapped[str] = mapped_column("Name", String(120), nullable=False)
+    start_date: Mapped[date | None] = mapped_column("StartDate", Date)
+    end_date: Mapped[date | None] = mapped_column("EndDate", Date)
+    colour: Mapped[str] = mapped_column("Colour", String(9), nullable=False, default="#2F6F9E")
+
+    project: Mapped[Project] = relationship()
+    assignments: Mapped[list["PhaseAssignment"]] = relationship(
+        back_populates="phase", cascade="all, delete-orphan")
+
+
+class PhaseAssignment(Base):
+    """One row of the project's roles & responsibilities table: this role
+    (with its responsibilities) is carried by this person during this phase."""
+    __tablename__ = "phase_assignment"
+    __table_args__ = (UniqueConstraint("PhaseId", "RoleId", "PersonId", name="ux_phase_assign"),)
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    phase_id: Mapped[int] = mapped_column("PhaseId", ForeignKey("phase.Id", ondelete="CASCADE"), nullable=False)
+    role_id: Mapped[int] = mapped_column("RoleId", ForeignKey("role.Id", ondelete="CASCADE"), nullable=False)
+    person_id: Mapped[int] = mapped_column("PersonId", ForeignKey("person.Id", ondelete="CASCADE"), nullable=False)
+    notes: Mapped[str | None] = mapped_column("Notes", String(500))
+
+    phase: Mapped[Phase] = relationship(back_populates="assignments")
+    role: Mapped[Role] = relationship()
+    person: Mapped[Person] = relationship()
+
+
+class DateApproval(Base):
+    """Customer sign-off of the actual dates on one activity (line item).
+    Whenever an organisation employee enters or changes an actual date the row
+    (re)enters Pending; a customer then approves or rejects it with a comment."""
+    __tablename__ = "date_approval"
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    activity_id: Mapped[int] = mapped_column("ActivityId", ForeignKey("activity.Id", ondelete="CASCADE"),
+                                             nullable=False, unique=True)
+    actual_start: Mapped[date | None] = mapped_column("ActualStart", Date)
+    actual_finish: Mapped[date | None] = mapped_column("ActualFinish", Date)
+    status: Mapped[str] = mapped_column("Status", String(10), nullable=False, default="Pending")
+    comment: Mapped[str | None] = mapped_column("Comment", String(500))
+    submitted_by: Mapped[str] = mapped_column("SubmittedBy", String(120), nullable=False, default="")
+    submitted_at_utc: Mapped[datetime | None] = mapped_column("SubmittedAtUtc", DateTime)
+    decided_by: Mapped[str | None] = mapped_column("DecidedBy", String(120))
+    decided_at_utc: Mapped[datetime | None] = mapped_column("DecidedAtUtc", DateTime)
+
+    activity: Mapped[Activity] = relationship()

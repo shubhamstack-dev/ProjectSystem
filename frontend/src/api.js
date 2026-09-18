@@ -69,6 +69,19 @@ export const api = {
   updatePerson: (id, p) => call('PUT', `/api/team/people/${id}`, p),
   deletePerson: (id) => call('DELETE', `/api/team/people/${id}`),
   workload: () => call('GET', '/api/team/workload'),
+  // phases (roles & responsibilities per phase)
+  phases: (projectId) => call('GET', `/api/projects/${projectId}/phases`),
+  createPhase: (projectId, p) => call('POST', `/api/projects/${projectId}/phases`, p),
+  updatePhase: (id, p) => call('PUT', `/api/phases/${id}`, p),
+  deletePhase: (id) => call('DELETE', `/api/phases/${id}`),
+  movePhase: (id, direction) => call('POST', `/api/phases/${id}/move`, { direction }),
+  addPhaseAssignment: (phaseId, a) => call('POST', `/api/phases/${phaseId}/assignments`, a),
+  deletePhaseAssignment: (id) => call('DELETE', `/api/phases/assignments/${id}`),
+  // customer portal
+  customerProjects: () => call('GET', '/api/customer/projects'),
+  customerLines: (projectId) => call('GET', `/api/customer/projects/${projectId}/lines`),
+  approveLine: (activityId, comment) => call('POST', `/api/customer/lines/${activityId}/approve`, { comment }),
+  rejectLine: (activityId, comment) => call('POST', `/api/customer/lines/${activityId}/reject`, { comment }),
   // audit
   audit: (params) => call('GET', '/api/audit?' + new URLSearchParams(params).toString()),
 }

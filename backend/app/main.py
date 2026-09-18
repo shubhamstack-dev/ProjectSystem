@@ -8,7 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import CORS_ORIGINS
-from .routers import activities, audit, projects, team
+from sqlalchemy import text
+
+from .database import Base, engine
+from .routers import activities, audit, customer, phases, projects, team
 from .services.rules import NotFound, RuleViolation
 
 app = FastAPI(title="ProjectSystem API", version="1.0.0")
@@ -42,3 +45,13 @@ app.include_router(projects.router)
 app.include_router(activities.router)
 app.include_router(team.router)
 app.include_router(audit.router)
+app.include_router(phases.router)
+app.include_router(customer.router)
+
+# ---- lightweight startup migration (v1.1: customer roles, phases, approvals)
+Base.metadata.create_all(engine)          # creates phase / phase_assignment / date_approval
+try:
+    with engine.begin() as cn:            # existing installs: add the customer flag
+        cn.execute(text("ALTER TABLE role ADD COLUMN IsCustomer TINYINT NOT NULL DEFAULT 0"))
+except Exception:
+    pass                                   # column already exists

@@ -56,11 +56,11 @@ export default function Team() {
         </section>
 
         <section className="panel">
-          <div className="ph">Roles <button className="sm pri" onClick={() => setDlg({ kind: 'role', row: null })}>+ Role</button></div>
+          <div className="ph">Roles <span className="hint" style={{ fontWeight: 400 }}>&nbsp;(customer roles live under Roles → Customer Roles)</span> <button className="sm pri" onClick={() => setDlg({ kind: 'role', row: null })}>+ Role</button></div>
           <table className="grid"><thead><tr><th>Role</th><th>Responsibilities</th><th>Organisation</th><th>Views</th><th className="r">People</th><th className="act" /></tr></thead>
             <tbody>
-              {roles.length === 0 && <tr><td colSpan={6} className="muted">None yet.</td></tr>}
-              {roles.map((r) => (
+              {roles.filter((r) => !r.isCustomer).length === 0 && <tr><td colSpan={6} className="muted">None yet.</td></tr>}
+              {roles.filter((r) => !r.isCustomer).map((r) => (
                 <tr key={r.id}>
                   <td style={{ fontWeight: 600 }}><span className="swatch" style={{ background: r.colour }} />{r.name}</td><td className="wrap muted">{r.responsibilities || ''}</td>
                   <td className="muted">{r.organisationName || '—'}</td>

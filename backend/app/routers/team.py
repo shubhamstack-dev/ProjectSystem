@@ -76,7 +76,8 @@ def _role_out(r: Role) -> RoleOut:
     return RoleOut(id=r.id, name=r.name, responsibilities=r.responsibilities, colour=r.colour,
                    organisation_id=r.organisation_id,
                    organisation_name=r.organisation.name if r.organisation else None,
-                   views=[v for v in r.view_access.split(",") if v], people_count=len(r.people))
+                   views=[v for v in r.view_access.split(",") if v], people_count=len(r.people),
+                   is_customer=bool(r.is_customer))
 
 
 @router.get("/roles", response_model=list[RoleOut])
@@ -89,7 +90,8 @@ def roles(db: Session = Depends(get_db)):
 @router.post("/roles", response_model=RoleOut, status_code=201)
 def add_role(req: RoleIn, db: Session = Depends(get_db), actor: str = Depends(who)):
     r = Role(name=req.name.strip(), responsibilities=req.responsibilities, colour=req.colour,
-             view_access=",".join(req.views), organisation_id=req.organisation_id)
+             view_access=",".join(req.views), organisation_id=req.organisation_id,
+             is_customer=1 if req.is_customer else 0)
     db.add(r)
     db.flush()
     audit.record(db, actor, "Created", "Role", r.name, "views: " + r.view_access)
@@ -108,6 +110,7 @@ def update_role(role_id: int, req: RoleIn, db: Session = Depends(get_db), actor:
         audit.change("organisation", r.organisation_id, req.organisation_id)] if c)
     r.name, r.responsibilities, r.colour, r.view_access, r.organisation_id = \
         req.name.strip(), req.responsibilities, req.colour, views, req.organisation_id
+    r.is_customer = 1 if req.is_customer else 0
     if detail:
         audit.record(db, actor, "Edited", "Role", r.name, detail)
     db.commit()
