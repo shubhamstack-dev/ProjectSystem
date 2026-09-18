@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS activity_dependency (
   ActivityId    INT NOT NULL,
   PredecessorId INT NOT NULL,
   Type          INT NOT NULL DEFAULT 0,   -- 0 FS, 1 SS, 2 FF, 3 SF
-  Lag           INT NOT NULL DEFAULT 0,   -- working days, may be negative
+  `Lag`           INT NOT NULL DEFAULT 0,   -- working days, may be negative
   UNIQUE KEY ux_dep (ActivityId, PredecessorId),
   CONSTRAINT fk_dep_activity FOREIGN KEY (ActivityId)    REFERENCES activity(Id) ON DELETE CASCADE,
   -- RESTRICT on purpose: a predecessor cannot be deleted out from under a link
