@@ -9,6 +9,8 @@ import Milestones from './pages/Milestones.jsx'
 import Audit from './pages/Audit.jsx'
 import CustomerRoles from './pages/CustomerRoles.jsx'
 import Phases from './pages/Phases.jsx'
+import Tickets from './pages/Tickets.jsx'
+import TicketModules from './pages/TicketModules.jsx'
 
 const I = {
   portfolio: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>,
@@ -19,6 +21,8 @@ const I = {
   audit: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>,
   customer: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5"/><circle cx="17" cy="17" r="4"/></svg>,
   phases: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 5h8v4H3zM7 10h10v4H7zM11 15h10v4H11z"/></svg>,
+  tickets: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 8a2 2 0 002-2h12a2 2 0 002 2v2a2 2 0 000 4v2a2 2 0 00-2 2H6a2 2 0 00-2-2v-2a2 2 0 000-4V8z"/><path d="M13 6v2M13 11v2M13 16v2"/></svg>,
+  cfg: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 00-2-1.2L14.2 3h-4l-.4 2.7a7 7 0 00-2 1.2l-2.3-1-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-1a7 7 0 002 1.2l.4 2.7h4l.4-2.7a7 7 0 002-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>,
 }
 
 export default function App() {
@@ -38,6 +42,8 @@ export default function App() {
           <NavLink to="/milestones">{I.miles}<span>Milestones</span></NavLink>
           <NavLink to="/assignments">{I.assign}<span>Assignments</span></NavLink>
           <NavLink to="/phases">{I.phases}<span>Phases</span></NavLink>
+          <NavLink to="/tickets">{I.tickets}<span>Tickets</span></NavLink>
+          <NavLink to="/ticket-setup">{I.cfg}<span>Ticket setup</span></NavLink>
           <div className="navsec">Roles</div>
           <NavLink to="/team">{I.team}<span>Team Roles</span></NavLink>
           <NavLink to="/customer-roles">{I.customer}<span>Customer Roles</span></NavLink>
@@ -60,6 +66,8 @@ export default function App() {
           <Route path="/team" element={<Team />} />
           <Route path="/customer-roles" element={<CustomerRoles />} />
           <Route path="/phases" element={<Phases />} />
+          <Route path="/tickets" element={<Tickets />} />
+          <Route path="/ticket-setup" element={<TicketModules />} />
           <Route path="/audit" element={<Audit />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

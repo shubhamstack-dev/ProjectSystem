@@ -165,3 +165,58 @@ CREATE TABLE IF NOT EXISTS date_approval (
   UNIQUE KEY ux_approval_activity (ActivityId),
   CONSTRAINT fk_da_activity FOREIGN KEY (ActivityId) REFERENCES activity(Id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+-- ---- v1.2: tickets ---------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ticket_module (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  Name VARCHAR(120) NOT NULL UNIQUE,
+  ModuleType VARCHAR(10) NOT NULL DEFAULT 'SAP',      -- SAP | NonSAP
+  Description VARCHAR(600) NULL,
+  Active TINYINT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS ticket (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  ProjectId INT NOT NULL,
+  PhaseId INT NULL,
+  ModuleId INT NULL,
+  Title VARCHAR(200) NOT NULL,
+  Description TEXT NULL,
+  Priority VARCHAR(10) NOT NULL DEFAULT 'Medium',     -- High | Medium | Low
+  Status VARCHAR(12) NOT NULL DEFAULT 'Open',         -- Open | InProgress | Resolved | Closed
+  AssigneeId INT NULL,
+  CreatedBy VARCHAR(120) NOT NULL DEFAULT '',
+  CreatedAtUtc DATETIME NOT NULL,
+  UpdatedAtUtc DATETIME NOT NULL,
+  CONSTRAINT fk_ticket_project FOREIGN KEY (ProjectId) REFERENCES project(Id) ON DELETE CASCADE,
+  CONSTRAINT fk_ticket_phase FOREIGN KEY (PhaseId) REFERENCES phase(Id) ON DELETE SET NULL,
+  CONSTRAINT fk_ticket_module FOREIGN KEY (ModuleId) REFERENCES ticket_module(Id) ON DELETE SET NULL,
+  CONSTRAINT fk_ticket_assignee FOREIGN KEY (AssigneeId) REFERENCES person(Id) ON DELETE SET NULL,
+  INDEX ix_ticket_project (ProjectId),
+  INDEX ix_ticket_assignee (AssigneeId)
+);
+
+CREATE TABLE IF NOT EXISTS ticket_response (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  TicketId INT NOT NULL,
+  Author VARCHAR(120) NOT NULL,
+  Body TEXT NOT NULL,
+  CreatedAtUtc DATETIME NOT NULL,
+  CONSTRAINT fk_tresp_ticket FOREIGN KEY (TicketId) REFERENCES ticket(Id) ON DELETE CASCADE,
+  INDEX ix_ticket_response (TicketId)
+);
+
+CREATE TABLE IF NOT EXISTS ticket_attachment (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  TicketId INT NOT NULL,
+  ResponseId INT NULL,
+  FileName VARCHAR(255) NOT NULL,
+  ContentType VARCHAR(120) NOT NULL DEFAULT 'application/octet-stream',
+  SizeBytes INT NOT NULL DEFAULT 0,
+  Data MEDIUMBLOB NOT NULL,
+  UploadedBy VARCHAR(120) NOT NULL DEFAULT '',
+  UploadedAtUtc DATETIME NOT NULL,
+  CONSTRAINT fk_tatt_ticket FOREIGN KEY (TicketId) REFERENCES ticket(Id) ON DELETE CASCADE,
+  CONSTRAINT fk_tatt_response FOREIGN KEY (ResponseId) REFERENCES ticket_response(Id) ON DELETE CASCADE,
+  INDEX ix_ticket_attachment (TicketId)
+);

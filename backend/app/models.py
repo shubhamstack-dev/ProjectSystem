@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import (BigInteger, Date, DateTime, ForeignKey, Integer, String, Text,
+from sqlalchemy import (BigInteger, Date, DateTime, ForeignKey, Integer, LargeBinary, String, Text,
                         UniqueConstraint, Index)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -231,3 +231,85 @@ class DateApproval(Base):
     decided_at_utc: Mapped[datetime | None] = mapped_column("DecidedAtUtc", DateTime)
 
     activity: Mapped[Activity] = relationship()
+
+
+# ---- v1.2: tickets --------------------------------------------------------
+TICKET_PRIORITIES = ("High", "Medium", "Low")
+TICKET_STATUSES = ("Open", "InProgress", "Resolved", "Closed")
+
+
+class TicketModule(Base):
+    """Configuration entry: a module/tool a ticket can be raised against.
+    module_type says whether it lives within SAP or outside SAP."""
+    __tablename__ = "ticket_module"
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column("Name", String(120), nullable=False, unique=True)
+    module_type: Mapped[str] = mapped_column("ModuleType", String(10), nullable=False, default="SAP")  # SAP | NonSAP
+    description: Mapped[str | None] = mapped_column("Description", String(600))
+    active: Mapped[int] = mapped_column("Active", Integer, nullable=False, default=1)
+
+
+class Ticket(Base):
+    __tablename__ = "ticket"
+    __table_args__ = (Index("ix_ticket_project", "ProjectId"),
+                      Index("ix_ticket_assignee", "AssigneeId"))
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column("ProjectId", ForeignKey("project.Id", ondelete="CASCADE"), nullable=False)
+    phase_id: Mapped[int | None] = mapped_column("PhaseId", ForeignKey("phase.Id", ondelete="SET NULL"))
+    module_id: Mapped[int | None] = mapped_column("ModuleId", ForeignKey("ticket_module.Id", ondelete="SET NULL"))
+    title: Mapped[str] = mapped_column("Title", String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column("Description", Text)
+    priority: Mapped[str] = mapped_column("Priority", String(10), nullable=False, default="Medium")
+    status: Mapped[str] = mapped_column("Status", String(12), nullable=False, default="Open")
+    assignee_id: Mapped[int | None] = mapped_column("AssigneeId", ForeignKey("person.Id", ondelete="SET NULL"))
+    created_by: Mapped[str] = mapped_column("CreatedBy", String(120), nullable=False, default="")
+    created_at_utc: Mapped[datetime] = mapped_column("CreatedAtUtc", DateTime, nullable=False)
+    updated_at_utc: Mapped[datetime] = mapped_column("UpdatedAtUtc", DateTime, nullable=False)
+
+    project: Mapped[Project] = relationship()
+    phase: Mapped[Phase | None] = relationship()
+    module: Mapped[TicketModule | None] = relationship()
+    assignee: Mapped[Person | None] = relationship()
+    responses: Mapped[list["TicketResponse"]] = relationship(
+        back_populates="ticket", cascade="all, delete-orphan", order_by="TicketResponse.id")
+    attachments: Mapped[list["TicketAttachment"]] = relationship(
+        back_populates="ticket", cascade="all, delete-orphan")
+
+    @property
+    def number(self) -> str:
+        return f"TCK-{self.id:05d}"
+
+
+class TicketResponse(Base):
+    """One reply on the ticket's thread. Replies land on the ticket the moment
+    they are saved, so whoever the ticket is allocated to (and the creator)
+    sees them straight away."""
+    __tablename__ = "ticket_response"
+    __table_args__ = (Index("ix_ticket_response", "TicketId"),)
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    ticket_id: Mapped[int] = mapped_column("TicketId", ForeignKey("ticket.Id", ondelete="CASCADE"), nullable=False)
+    author: Mapped[str] = mapped_column("Author", String(120), nullable=False)
+    body: Mapped[str] = mapped_column("Body", Text, nullable=False)
+    created_at_utc: Mapped[datetime] = mapped_column("CreatedAtUtc", DateTime, nullable=False)
+
+    ticket: Mapped[Ticket] = relationship(back_populates="responses")
+    attachments: Mapped[list["TicketAttachment"]] = relationship(back_populates="response")
+
+
+class TicketAttachment(Base):
+    """A document attached either to the ticket itself (at creation) or to one
+    of its responses. Content is stored in the database."""
+    __tablename__ = "ticket_attachment"
+    __table_args__ = (Index("ix_ticket_attachment", "TicketId"),)
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    ticket_id: Mapped[int] = mapped_column("TicketId", ForeignKey("ticket.Id", ondelete="CASCADE"), nullable=False)
+    response_id: Mapped[int | None] = mapped_column("ResponseId", ForeignKey("ticket_response.Id", ondelete="CASCADE"))
+    file_name: Mapped[str] = mapped_column("FileName", String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column("ContentType", String(120), nullable=False, default="application/octet-stream")
+    size_bytes: Mapped[int] = mapped_column("SizeBytes", Integer, nullable=False, default=0)
+    data: Mapped[bytes] = mapped_column("Data", LargeBinary(length=(2 ** 24) - 1), nullable=False)  # MEDIUMBLOB
+    uploaded_by: Mapped[str] = mapped_column("UploadedBy", String(120), nullable=False, default="")
+    uploaded_at_utc: Mapped[datetime] = mapped_column("UploadedAtUtc", DateTime, nullable=False)
+
+    ticket: Mapped[Ticket] = relationship(back_populates="attachments")
+    response: Mapped[TicketResponse | None] = relationship(back_populates="attachments")

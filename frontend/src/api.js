@@ -41,6 +41,29 @@ async function call(method, url, body) {
   return data
 }
 
+
+// Multipart variant - used by tickets so documents can travel with the call.
+async function callForm(method, url, fields, files) {
+  const fd = new FormData()
+  for (const [k, v] of Object.entries(fields)) {
+    if (v !== undefined && v !== null && v !== '') fd.append(k, v)
+  }
+  for (const f of files || []) fd.append('files', f)
+  const res = await fetch(url, {
+    method,
+    headers: { ...(actingAs ? { 'X-Acting-As': actingAs } : {}) },
+    body: fd,
+  })
+  if (res.status === 204) return null
+  const text = await res.text()
+  const data = text ? JSON.parse(text) : null
+  if (!res.ok) {
+    const message = data?.message || (data?.detail && JSON.stringify(data.detail)) || res.statusText
+    throw new ApiError(res.status, message, data?.blockers)
+  }
+  return data
+}
+
 export const api = {
   // projects
   projects: () => call('GET', '/api/projects'),
@@ -82,6 +105,18 @@ export const api = {
   customerLines: (projectId) => call('GET', `/api/customer/projects/${projectId}/lines`),
   approveLine: (activityId, comment) => call('POST', `/api/customer/lines/${activityId}/approve`, { comment }),
   rejectLine: (activityId, comment) => call('POST', `/api/customer/lines/${activityId}/reject`, { comment }),
+  // tickets (v1.2)
+  ticketModules: () => call('GET', '/api/tickets/modules'),
+  createTicketModule: (m) => call('POST', '/api/tickets/modules', m),
+  updateTicketModule: (id, m) => call('PUT', `/api/tickets/modules/${id}`, m),
+  deleteTicketModule: (id) => call('DELETE', `/api/tickets/modules/${id}`),
+  tickets: (params) => call('GET', '/api/tickets?' + new URLSearchParams(params || {}).toString()),
+  ticket: (id) => call('GET', `/api/tickets/${id}`),
+  createTicket: (fields, files) => callForm('POST', '/api/tickets', fields, files),
+  updateTicket: (id, t) => call('PUT', `/api/tickets/${id}`, t),
+  deleteTicket: (id) => call('DELETE', `/api/tickets/${id}`),
+  respondTicket: (id, body, files) => callForm('POST', `/api/tickets/${id}/responses`, { body }, files),
+  attachmentUrl: (id) => `/api/tickets/attachments/${id}`,
   // audit
   audit: (params) => call('GET', '/api/audit?' + new URLSearchParams(params).toString()),
 }

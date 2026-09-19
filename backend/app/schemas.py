@@ -306,3 +306,73 @@ class ApprovalLineOut(Camel):
 
 class DecisionIn(Camel):
     comment: Optional[str] = None
+
+
+# ---- v1.2: tickets ----------------------------------------------------------
+class TicketModuleIn(Camel):
+    name: str
+    module_type: str = "SAP"          # "SAP" | "NonSAP"
+    description: Optional[str] = None
+    active: bool = True
+
+
+class TicketModuleOut(Camel):
+    id: int
+    name: str
+    module_type: str
+    description: Optional[str]
+    active: bool
+    ticket_count: int = 0
+
+
+class TicketAttachmentOut(Camel):
+    id: int
+    file_name: str
+    content_type: str
+    size_bytes: int
+    uploaded_by: str
+    uploaded_at_utc: datetime
+    response_id: Optional[int] = None
+
+
+class TicketResponseOut(Camel):
+    id: int
+    author: str
+    body: str
+    created_at_utc: datetime
+    attachments: list[TicketAttachmentOut] = Field(default_factory=list)
+
+
+class TicketOut(Camel):
+    id: int
+    number: str
+    project_id: int
+    project_code: str
+    project_name: str
+    phase_id: Optional[int]
+    phase_name: Optional[str]
+    module_id: Optional[int]
+    module_name: Optional[str]
+    module_type: Optional[str]
+    title: str
+    description: Optional[str]
+    priority: str
+    status: str
+    assignee_id: Optional[int]
+    assignee_name: Optional[str]
+    created_by: str
+    created_at_utc: datetime
+    updated_at_utc: datetime
+    response_count: int = 0
+    attachments: list[TicketAttachmentOut] = Field(default_factory=list)
+    responses: list[TicketResponseOut] = Field(default_factory=list)
+
+
+class TicketUpdateIn(Camel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    assignee_id: Optional[int] = None
+    module_id: Optional[int] = None
+    phase_id: Optional[int] = None
