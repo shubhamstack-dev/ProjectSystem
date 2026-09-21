@@ -1,11 +1,12 @@
-{$SITE_ADDRESS} {
+{$DOMAIN}, www.{$DOMAIN} {
 	encode gzip
-	request_body {
-		max_size 20MB
-	}
+
+	# API -> Python container
 	handle /api/* {
 		reverse_proxy backend:8000
 	}
+
+	# React app; unknown paths (/plan/3) fall back to index.html for the router
 	handle {
 		root * /srv
 		try_files {path} /index.html

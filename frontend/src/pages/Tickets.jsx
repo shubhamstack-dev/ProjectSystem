@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, getActingAs } from '../api.js'
+import { api, getActingAs, getCurrentUser } from '../api.js'
+import { FilePicker, UploadProgress, AttachmentGallery } from '../components/Uploads.jsx'
 import Modal from '../components/Modal.jsx'
 import Notice from '../components/Notice.jsx'
 import { IcoTrash } from '../components/Icons.jsx'
@@ -24,42 +25,6 @@ function kb(n) {
 function when(iso) {
   const d = new Date(iso + (iso.endsWith('Z') ? '' : 'Z'))
   return d.toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
-}
-
-function AttachmentChips({ list }) {
-  if (!list?.length) return null
-  return (
-    <div className="attlist">
-      {list.map((a) => (
-        <a key={a.id} className="att" href={api.attachmentUrl(a.id)} title={`${a.fileName} · ${kb(a.sizeBytes)} · by ${a.uploadedBy}`}>
-          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12l-8.5 8.5a5 5 0 01-7-7L14 5a3.5 3.5 0 015 5l-8.5 8.5a2 2 0 01-3-3L15 8"/></svg>
-          {a.fileName} <span className="muted">({kb(a.sizeBytes)})</span>
-        </a>
-      ))}
-    </div>
-  )
-}
-
-function FilePicker({ files, setFiles }) {
-  const ref = useRef(null)
-  return (
-    <div className="fld">
-      <label>Attach documents</label>
-      <input ref={ref} type="file" multiple
-             onChange={(e) => setFiles([...files, ...e.target.files])} />
-      {files.length > 0 && (
-        <div className="attlist">
-          {files.map((f, i) => (
-            <span key={i} className="att">
-              {f.name} <span className="muted">({kb(f.size)})</span>
-              <button className="x sm" type="button" title="Remove"
-                      onClick={() => { setFiles(files.filter((_, j) => j !== i)); if (ref.current) ref.current.value = '' }}>×</button>
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  )
 }
 
 // ---- create-ticket dialog ---------------------------------------------------
@@ -89,17 +54,19 @@ function CreateDialog({ projects, modules, people, defaultProjectId, onClose, on
     else setProcs([])
   }, [f.moduleId])
 
+  const [progress, setProgress] = useState(null)
   async function save() {
     setBusy(true)
+    setProgress(files.length ? 0 : null)
     try {
       const t = await api.createTicket({
         project_id: f.projectId, phase_id: f.phaseId, module_id: f.moduleId,
         process_id: f.processId, process_step_id: f.processStepId,
         title: f.title, description: f.description, priority: f.priority,
         assignee_id: f.assigneeId,
-      }, files)
+      }, files, files.length ? setProgress : null)
       onSaved(t)
-    } catch (e) { onError(e) } finally { setBusy(false) }
+    } catch (e) { onError(e) } finally { setBusy(false); setProgress(null) }
   }
 
   const activeModules = modules.filter((m) => m.active)
@@ -167,13 +134,15 @@ function CreateDialog({ projects, modules, people, defaultProjectId, onClose, on
             {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
           </select>
         </div>
-        <div className="fld">
-          <label>Allocate to</label>
-          <select value={f.assigneeId} onChange={set('assigneeId')}>
-            <option value="">— unallocated —</option>
-            {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
+        {!getCurrentUser()?.is_customer && (
+          <div className="fld">
+            <label>Allocate to</label>
+            <select value={f.assigneeId} onChange={set('assigneeId')}>
+              <option value="">— unallocated —</option>
+              {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+        )}
       </div>
       <div className="fld">
         <label>Title *</label>
@@ -184,7 +153,9 @@ function CreateDialog({ projects, modules, people, defaultProjectId, onClose, on
         <textarea rows={4} value={f.description} onChange={set('description')}
                   placeholder="What happened, where, steps to reproduce, expected outcome…" />
       </div>
-      <FilePicker files={files} setFiles={setFiles} />
+      <FilePicker files={files} setFiles={setFiles}
+                  label="Show the problem — screenshots, a screen recording, documents" />
+      <UploadProgress progress={progress} />
     </Modal>
   )
 }
@@ -193,6 +164,9 @@ function CreateDialog({ projects, modules, people, defaultProjectId, onClose, on
 function TicketDetail({ id, people, modules, onClose, onChanged, onError }) {
   const [t, setT] = useState(null)
   const [reply, setReply] = useState('')
+  const [replyProgress, setReplyProgress] = useState(null)
+  const me = getCurrentUser()
+  const isCustomer = !!me?.is_customer
   const [files, setFiles] = useState([])
   const [busy, setBusy] = useState(false)
   const endRef = useRef(null)
@@ -210,9 +184,11 @@ function TicketDetail({ id, people, modules, onClose, onChanged, onError }) {
     if (!reply.trim()) return
     setBusy(true)
     try {
-      const updated = await api.respondTicket(id, reply, files)
+      setReplyProgress(files.length ? 0 : null)
+      const updated = await api.respondTicket(id, reply, files,
+                                              files.length ? setReplyProgress : null)
       setT(updated); setReply(''); setFiles([]); onChanged()
-    } catch (e) { onError(e) } finally { setBusy(false) }
+    } catch (e) { onError(e) } finally { setBusy(false); setReplyProgress(null) }
   }
   async function patch(p) {
     try { const updated = await api.updateTicket(id, p); setT(updated); onChanged() } catch (e) { onError(e) }
@@ -240,27 +216,30 @@ function TicketDetail({ id, people, modules, onClose, onChanged, onError }) {
       <div className="row3" style={{ margin: '10px 0' }}>
         <div className="fld">
           <label>Allocated to</label>
+          {isCustomer ? <span className="ro">{t.assigneeName || 'Not yet allocated'}</span> :
           <select value={t.assigneeId || ''} onChange={(e) => patch({ assigneeId: e.target.value || null, moduleId: t.moduleId, phaseId: t.phaseId })}>
             <option value="">— unallocated —</option>
             {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          </select>}
         </div>
         <div className="fld">
           <label>Priority</label>
+          {isCustomer ? <span className="ro">{t.priority}</span> :
           <select value={t.priority} onChange={(e) => patch({ priority: e.target.value, assigneeId: t.assigneeId, moduleId: t.moduleId, phaseId: t.phaseId })}>
             {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
-          </select>
+          </select>}
         </div>
         <div className="fld">
           <label>Status</label>
+          {isCustomer ? <span className="ro">{t.status === 'InProgress' ? 'In progress' : t.status}</span> :
           <select value={t.status} onChange={(e) => patch({ status: e.target.value, assigneeId: t.assigneeId, moduleId: t.moduleId, phaseId: t.phaseId })}>
             {STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-          </select>
+          </select>}
         </div>
       </div>
 
       {t.description && <div className="tkt-desc">{t.description}</div>}
-      <AttachmentChips list={t.attachments} />
+      <AttachmentGallery list={t.attachments} />
 
       <div className="thread">
         {t.responses.length === 0 && <div className="muted" style={{ padding: '8px 0' }}>No responses yet.</div>}
@@ -270,7 +249,7 @@ function TicketDetail({ id, people, modules, onClose, onChanged, onError }) {
             <div key={r.id} className={`msg ${mine ? 'mine' : ''}`}>
               <div className="msg-head"><b>{r.author}</b><span className="muted">{when(r.createdAtUtc)}</span></div>
               <div className="msg-body">{r.body}</div>
-              <AttachmentChips list={r.attachments} />
+              <AttachmentGallery list={r.attachments} />
             </div>
           )
         })}
@@ -283,7 +262,8 @@ function TicketDetail({ id, people, modules, onClose, onChanged, onError }) {
         <div className="reply">
           <textarea rows={3} value={reply} onChange={(e) => setReply(e.target.value)}
                     placeholder="Write a response… it appears on the ticket the moment you send it." />
-          <FilePicker files={files} setFiles={setFiles} />
+          <FilePicker files={files} setFiles={setFiles} label="Attach to your reply" />
+          <UploadProgress progress={replyProgress} />
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button className="pri" disabled={busy || !reply.trim()} onClick={send}>
               {busy ? 'Sending…' : 'Send response'}
@@ -306,11 +286,15 @@ export default function Tickets() {
   const [openId, setOpenId] = useState(null)
   const [error, setError] = useState(null)
 
+  const isCustomer = !!getCurrentUser()?.is_customer
   useEffect(() => {
-    Promise.all([api.projects(), api.ticketModules(), api.people()])
+    // A customer account is not given the team list — the gate refuses it,
+    // and a customer has no business choosing who at Aequm picks the ticket up.
+    Promise.all([api.projects(), api.ticketModules(),
+                 isCustomer ? Promise.resolve([]) : api.people()])
       .then(([pr, m, pe]) => { setProjects(pr); setModules(m); setPeople(pe) })
       .catch(setError)
-  }, [])
+  }, [isCustomer])
 
   const load = () => {
     const p = {}
@@ -382,7 +366,7 @@ export default function Tickets() {
               <td style={{ textAlign: 'center' }}>{t.responseCount}</td>
               <td className="muted">{when(t.updatedAtUtc)}</td>
               <td onClick={(e) => e.stopPropagation()}>
-                <button className="ib danger" title="Delete" onClick={() => remove(t)}><IcoTrash /></button>
+                {!isCustomer && <button className="ib danger" title="Delete" onClick={() => remove(t)}><IcoTrash /></button>}
               </td>
             </tr>
           ))}

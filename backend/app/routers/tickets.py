@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
-from fastapi.responses import Response
+from fastapi import Header, Request, APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -29,16 +29,21 @@ from .common import who
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
 
-MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024   # 10 MB per file
-MAX_FILES_PER_CALL = 10
+from ..services import files as FILES
+from .. import config as CFG
 
 
 # ---- mapping ---------------------------------------------------------------
 def _att_out(a: TicketAttachment) -> TicketAttachmentOut:
+    # The link is signed for whoever is reading this ticket right now. It is
+    # only ever built inside an answer the caller was allowed to receive, so it
+    # carries their permission — and expires, rather than becoming a key.
     return TicketAttachmentOut(
         id=a.id, file_name=a.file_name, content_type=a.content_type,
         size_bytes=a.size_bytes, uploaded_by=a.uploaded_by,
-        uploaded_at_utc=a.uploaded_at_utc, response_id=a.response_id)
+        uploaded_at_utc=a.uploaded_at_utc, response_id=a.response_id,
+        kind=a.kind or "document",
+        url=f"/api/tickets/attachments/{a.id}?{FILES.signed_query(a.id)}")
 
 
 def _resp_out(r: TicketResponse) -> TicketResponseOut:
@@ -83,20 +88,30 @@ def _load_ticket(db: Session, ticket_id: int) -> Ticket:
 
 async def _store_files(db: Session, ticket: Ticket, files: list[UploadFile],
                        actor: str, response_id: int | None = None) -> None:
-    if len(files) > MAX_FILES_PER_CALL:
-        raise RuleViolation(f"At most {MAX_FILES_PER_CALL} files can be attached in one go.")
-    for f in files:
-        blob = await f.read()
-        if not blob:
-            continue
-        if len(blob) > MAX_ATTACHMENT_BYTES:
-            raise RuleViolation(f'"{f.filename}" is larger than 10 MB.')
+    """Stream each upload to disk and record it. All or nothing: if any file is
+    refused, the ones already written are removed, so a ticket never ends up
+    carrying half of what somebody meant to attach."""
+    files = [f for f in files if f and (f.filename or "")]
+    if len(files) > CFG.MAX_FILES_PER_CALL:
+        raise RuleViolation(f"At most {CFG.MAX_FILES_PER_CALL} files can be attached in one go.")
+    saved = []
+    try:
+        for f in files:
+            saved.append(await FILES.save_upload(f))
+    except FILES.FileRefused as e:
+        for m in saved:
+            FILES.remove(m["storage_key"])
+        raise RuleViolation(str(e))
+    except BaseException:
+        for m in saved:
+            FILES.remove(m["storage_key"])
+        raise
+    for m in saved:
         db.add(TicketAttachment(
             ticket_id=ticket.id, response_id=response_id,
-            file_name=(f.filename or "attachment")[:255],
-            content_type=f.content_type or "application/octet-stream",
-            size_bytes=len(blob), data=blob, uploaded_by=actor,
-            uploaded_at_utc=datetime.utcnow()))
+            file_name=m["file_name"], content_type=m["content_type"], kind=m["kind"],
+            size_bytes=m["size_bytes"], storage_key=m["storage_key"], sha256=m["sha256"],
+            data=None, uploaded_by=actor, uploaded_at_utc=datetime.utcnow()))
 
 
 def _check_priority(p: str) -> str:
@@ -406,9 +421,15 @@ def update_ticket(ticket_id: int, req: TicketUpdateIn, db: Session = Depends(get
 @router.delete("/{ticket_id}", status_code=204)
 def delete_ticket(ticket_id: int, db: Session = Depends(get_db), actor: str = Depends(who)):
     t = _load_ticket(db, ticket_id)
+    keys = [a.storage_key for a in db.execute(select(TicketAttachment).where(
+        TicketAttachment.ticket_id == t.id)).scalars() if a.storage_key]
     audit.record(db, actor, "Deleted", "Ticket", f"{t.number} {t.title}", project=t.project)
     db.delete(t)
     db.commit()
+    # Only once the row is gone: a failed delete must not leave a ticket whose
+    # files have already vanished from under it.
+    for k in keys:
+        FILES.remove(k)
 
 
 @router.post("/{ticket_id}/responses", response_model=TicketOut, status_code=201)
@@ -441,10 +462,45 @@ async def respond(ticket_id: int, caller: Caller = Depends(current_user),
 
 
 @router.get("/attachments/{attachment_id}")
-def download(attachment_id: int, db: Session = Depends(get_db)):
+def download(attachment_id: int, request: Request, exp: int | None = None,
+             sig: str | None = None, db: Session = Depends(get_db),
+             authorization: str | None = Header(None)):
+    """Serve one attachment, to someone entitled to its ticket.
+
+    This endpoint was open until v1.5: anybody who could reach the API could
+    walk the ids and read every customer's files. It now accepts either a
+    signed link (issued only inside a ticket the caller may see) or a bearer
+    token whose holder may see the ticket. Both answer 404 rather than 403
+    when the answer is no, so the existence of a file is not itself disclosed.
+    """
     a = db.get(TicketAttachment, attachment_id)
     if a is None:
         raise NotFound(f"Attachment {attachment_id} not found.")
-    safe = a.file_name.replace('"', "'")
-    return Response(content=a.data, media_type=a.content_type,
-                    headers={"Content-Disposition": f'attachment; filename="{safe}"'})
+
+    allowed = FILES.signature_ok(attachment_id, exp, sig)
+    if not allowed and authorization:
+        try:
+            caller = current_user(authorization=authorization, db=db)
+        except Exception:
+            caller = None
+        if caller is not None:
+            t = db.get(Ticket, a.ticket_id)
+            allowed = t is not None and _may_touch(caller, t.project_id)
+    if not allowed:
+        raise NotFound(f"Attachment {attachment_id} not found.")
+
+    safe = a.file_name.replace('"', "'").replace("\r", "").replace("\n", "")
+    inline = (a.kind in FILES.INLINE_KINDS or a.content_type in FILES.INLINE_MIMES) \
+        and request.query_params.get("download") != "1"
+    headers = {
+        "Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{safe}"',
+        # never let the browser second-guess the type it was given
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, max-age=300",
+    }
+    if a.storage_key:
+        # FileResponse streams from disk and honours Range requests, which a
+        # <video> element needs to seek — and which Safari needs to play at all.
+        return FileResponse(FILES.path_for(a.storage_key), media_type=a.content_type,
+                            headers=headers)
+    return Response(content=a.data or b"", media_type=a.content_type, headers=headers)

@@ -21,3 +21,47 @@ Update karne par:
 
 Backup:
   docker compose -f docker-compose.prod.yml exec mysql sh -c 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" projectsystem' > backup-$(date +%F).sql
+
+---
+
+## v1.5 par update karne se pehle (ek baar)
+
+1. `.env` me SECRET_KEY daalo. Iske bina har restart par sab log sign out ho jaate
+   hain aur khule video links toot jaate hain:
+
+       cd /opt/projectsystem
+       echo "SECRET_KEY=$(openssl rand -hex 32)" >> .env
+
+   Ye key ek baar banao aur phir kabhi mat badlo.
+
+2. Update:
+
+       git pull && docker compose -f docker-compose.prod.yml up -d --build
+
+   Database ke naye columns API start hote hi apne aap ban jaate hain.
+   Purane attachments (database me rakhe hue) waise hi khulte rahenge.
+
+## Uploaded files (screenshots, videos) kahan hain
+
+Ab files database me nahi, `attachments` volume me disk par rehti hain.
+Database me sirf list hai, files volume me hain - **backup dono ka lena hai**:
+
+    # database (pehle jaisa)
+    docker compose -f docker-compose.prod.yml exec mysql sh -c 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" projectsystem' > backup-$(date +%F).sql
+
+    # files (naya)
+    docker compose -f docker-compose.prod.yml exec -T backend tar czf - -C /app/data attachments > attachments-$(date +%F).tgz
+
+Dono files `.gitignore` me hain - inhe kabhi commit mat karna. v1.3 ke baad
+database backup me password hashes hote hain.
+
+Restore:
+
+    docker compose -f docker-compose.prod.yml exec -T backend tar xzf - -C /app/data < attachments-YYYY-MM-DD.tgz
+
+## Disk space
+
+Video badi hoti hain (250 MB tak ek file). Disk dekhte raho:
+
+    df -h /
+    docker system df -v | grep attachments

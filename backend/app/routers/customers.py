@@ -17,7 +17,7 @@ from sqlalchemy import func, select
 
 from .. import models as M
 from ..services.audit import record as audit_record
-from ..services.auth import Caller, current_user, require_admin
+from ..services.auth import Caller, current_user, require_admin, hash_password
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
@@ -72,12 +72,19 @@ def _out(db, c: M.Customer) -> dict:
         M.Role.customer_id == c.id).order_by(M.Role.name)).scalars().all()
     users = db.execute(select(M.AppUser).where(
         M.AppUser.customer_id == c.id).order_by(M.AppUser.display_name)).scalars().all()
+    role_of = {}
+    for u in users:
+        p = db.get(M.Person, u.person_id) if u.person_id else None
+        role_of[u.id] = p.role.name if p and p.role else None
     return {
         "id": c.id, "code": c.code, "name": c.name, "active": bool(c.active),
         "projects": [{"id": p.id, "code": p.code, "name": p.name} for p in projects],
         "roles": [{"id": r.id, "name": r.name, "colour": r.colour} for r in roles],
         "users": [{"id": u.id, "display_name": u.display_name, "email": u.email,
-                   "active": bool(u.active), "source": u.source} for u in users],
+                   "active": bool(u.active), "source": u.source,
+                   "role": role_of.get(u.id),
+                   "must_change_password": bool(u.must_change_password),
+                   "last_login_utc": u.last_login_utc} for u in users],
         "project_count": len(projects), "user_count": len(users),
     }
 
@@ -291,3 +298,91 @@ def unassigned(caller: Caller = Depends(require_admin)):
         M.AppUser.active == 1).order_by(M.AppUser.display_name)).scalars().all()
     return [{"id": u.id, "display_name": u.display_name, "email": u.email,
              "source": u.source} for u in rows]
+
+
+@router.post("/{cid}/users/new", status_code=201)
+def add_user(cid: int, body: dict = Body(...), caller: Caller = Depends(require_admin)):
+    """Create a customer user straight onto the customer.
+
+    For customers who are not in Aequm's Microsoft tenant — most of them. The
+    account can raise tickets on this customer's projects, read the team's
+    replies and reply back, and nothing else; the API gate holds it there
+    whatever screen it finds.
+
+    A password is generated unless one is given, returned once, and never
+    stored in clear. Either way the holder must choose their own on first
+    sign-in: a password somebody else has typed or read is not a secret.
+    """
+    import re as _re
+    db = caller.db
+    c = db.get(M.Customer, cid)
+    if not c:
+        raise HTTPException(404, "No such customer")
+    if not c.active:
+        raise HTTPException(409, f"{c.name} is inactive. Reactivate it before adding people.")
+    name = (body.get("display_name") or "").strip()
+    email = (body.get("email") or "").strip().lower()
+    if not name:
+        raise HTTPException(422, "A user needs a name")
+    if not _re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise HTTPException(422, "That does not look like an email address")
+    clash = db.execute(select(M.AppUser).where(M.AppUser.email == email)).scalar_one_or_none()
+    if clash:
+        where = ""
+        if clash.customer_id:
+            other = db.get(M.Customer, clash.customer_id)
+            where = f" under {other.name}" if other else ""
+        raise HTTPException(409, f"{email} already has an account{where}.")
+
+    # The role must be a customer role, and either this customer's own or a
+    # shared one. A team role would be refused by the gate anyway, but it would
+    # also say something untrue about who this person works for.
+    role = None
+    rid = body.get("role_id")
+    if rid:
+        role = db.get(M.Role, int(rid))
+        if not role or not role.is_customer:
+            raise HTTPException(422, "Choose one of the customer roles")
+        if role.customer_id and role.customer_id != cid:
+            raise HTTPException(422, f"{role.name} belongs to another customer")
+    if role is None:
+        role = db.execute(select(M.Role).where(M.Role.customer_id == cid,
+                          M.Role.is_customer == 1).order_by(M.Role.name)).scalars().first()
+    if role is None:
+        role = db.execute(select(M.Role).where(M.Role.is_customer == 1,
+                          M.Role.customer_id.is_(None)).order_by(M.Role.name)).scalars().first()
+    if role is None:
+        role = M.Role(name="Customer Contact", is_customer=1, customer_id=cid,
+                      responsibilities="Raises and follows tickets",
+                      colour="#8A63D2", view_access="tickets")
+        db.add(role)
+        db.flush()
+
+    given = body.get("password") or ""
+    from .auth import _temp_password
+    temp = given or _temp_password()
+    try:
+        pw_hash = hash_password(temp)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+    from datetime import datetime, timezone
+    person = db.execute(select(M.Person).where(M.Person.email == email)).scalar_one_or_none()
+    if person is None:
+        person = M.Person(name=name, email=email, role_id=role.id)
+        db.add(person)
+        db.flush()
+    u = M.AppUser(email=email, display_name=name, source="local", user_type="Guest",
+                  customer_id=cid, person_id=person.id, password_hash=pw_hash,
+                  must_change_password=1, is_admin=0, active=1,
+                  created_at_utc=datetime.now(timezone.utc).replace(tzinfo=None))
+    db.add(u)
+    db.commit()
+    audit_record(db, caller.actor, "Create", "Customer user", f"{name} <{email}>",
+                 f"{c.code} {c.name}, role {role.name}")
+    db.commit()
+    return {"customer": _out(db, c),
+            "user": {"id": u.id, "display_name": name, "email": email, "role": role.name},
+            "temporary_password": None if given else temp,
+            "message": (f"{name} can now sign in with {email}. "
+                        + ("They will be asked to choose their own password first."))}

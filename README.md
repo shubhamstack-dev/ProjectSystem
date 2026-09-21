@@ -1,4 +1,98 @@
 
+## v1.5 — customer users, screenshots and video, and one gate in front of the API
+
+### Customer users, straight onto the customer
+
+*Customers → pick one → Add a person.* A name, a work email, optionally a role
+and a password. Leave the password empty and one is generated in a form that
+reads over the phone (`vfrF-wd6d-GATH`), shown **once**, and never stored in
+clear — only its hash.
+
+Either way the person must choose their own on first sign-in. A password
+somebody else has typed or read is not a secret, so until it is replaced the
+API refuses everything except replacing it — not just the screen, the API.
+
+What a customer user can do: raise tickets on their customer's projects,
+attach screenshots, video and documents, follow the team's replies, reply back
+with files of their own. What they cannot: edit a ticket's priority, status or
+allocation, delete one, or reach any planning or team screen. Their menu shows
+Tickets and nothing else.
+
+Each person on the customer shows a status — awaiting first sign-in, ready,
+active, deactivated — with *Reset password* and *Deactivate* beside them.
+Deactivating cuts the account off on its next request, not when its session
+happens to expire.
+
+### Screenshots, screen recordings and documents
+
+The ticket form and every reply take files by drag-and-drop or picker, with
+previews before anything is sent and a progress bar while it goes (a 200 MB
+video with no progress bar looks like a hang).
+
+| Kind | Types | Limit |
+|---|---|---|
+| Images | JPG, PNG, GIF, WebP, HEIC | 25 MB |
+| Video | MP4, MOV, WebM, AVI | 250 MB |
+| Documents | PDF, Word, Excel, PowerPoint, ZIP, text, CSV, log | 25 MB |
+
+Ten files at a time. All limits are `.env` settings.
+
+On the ticket, pictures show as pictures (click to enlarge), video plays in
+place with seeking, and documents download.
+
+**The file's contents decide its type, not its name.** An `.exe` renamed to
+`.png`, or a web page renamed to `.txt` or `.pdf`, is refused — checked against
+the file's first bytes, in the browser first and again on the server.
+
+**Files live on disk, not in MySQL.** The old column stopped at 16 MB, read
+every upload into memory whole, and would have swelled every database backup
+with video. Uploads now stream to disk in 1 MB pieces with the limit enforced
+as they arrive. Files attached before v1.5 still open exactly as before.
+
+**Uploads are all or nothing.** If one of five files is refused, the other
+four are removed too, so a ticket never carries half of what was meant.
+
+### The API was not locked down. It is now.
+
+When sign-in arrived in v1.3 the check went onto the routes being worked on at
+the time. **An audit for this release found 40 routes answering with nobody
+signed in** — deleting tickets, editing projects, reading the audit trail and
+team directory, approving another customer's dates — and the attachment
+download was open to anyone who could count.
+
+That is fixed in one place, `app/services/gate.py`, which runs before every
+route. Nothing under `/api` answers without a valid session on an active
+account, except a short named list (sign-in itself, health). Customer accounts
+are held to the routes a customer needs. A test walks **every** route in the
+API unauthenticated and fails if any answers, so a route added later cannot
+quietly be open.
+
+Two related fixes: the audit trail now takes the name from the signed session
+rather than the `X-Acting-As` header, which the caller could set to anyone; and
+the customer approval screens (`/api/customer/…`) are scoped to the customer's
+own projects — before, they listed everyone's.
+
+**Attachment links are signed.** An `<img>` or `<video>` tag cannot send a
+session token, so the API hands out a link carrying an HMAC signature, valid
+for an hour, and only inside a ticket the reader may already see. A tampered or
+expired link, or another customer's file, answers 404 — not 403, which would
+confirm the file exists.
+
+### Deploying — read before updating the server
+
+1. **Set `SECRET_KEY` in `.env`.** Production never had one, so every restart
+   has been signing everybody out. It now also signs attachment links. The
+   API prints a warning at startup when it is missing. `SERVER-STEPS.md` has
+   the one-line command.
+2. The compose file gains an **`attachments` volume**. Back it up alongside the
+   database: the database holds the list of files, the volume holds the files.
+3. Database changes apply themselves on startup.
+
+### Tests
+
+    cd backend && pytest -q        # 95 tests
+
+
 ## v1.4 — the customer master
 
 ### A customer is a code and a name

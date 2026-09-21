@@ -42,6 +42,12 @@ def health():
     return {"ok": True}
 
 
+# One gate in front of every route: signed in, active, and customer accounts
+# kept to the routes a customer needs. See services/gate.py for why.
+from .services import gate as _gate
+from .database import get_db as _get_db
+_gate.install(app, _get_db)
+
 app.include_router(projects.router)
 app.include_router(activities.router)
 app.include_router(team.router)
@@ -65,6 +71,12 @@ _ADDITIONS = [
     "ALTER TABLE project ADD COLUMN CustomerId INT NULL",
     "ALTER TABLE role ADD COLUMN CustomerId INT NULL",
     "ALTER TABLE app_user ADD COLUMN CustomerId INT NULL",
+    "ALTER TABLE app_user ADD COLUMN MustChangePassword TINYINT NOT NULL DEFAULT 0",
+    "ALTER TABLE ticket_attachment ADD COLUMN StorageKey VARCHAR(200) NULL",
+    "ALTER TABLE ticket_attachment ADD COLUMN Sha256 CHAR(64) NULL",
+    "ALTER TABLE ticket_attachment ADD COLUMN Kind VARCHAR(12) NOT NULL DEFAULT 'document'",
+    # new rows keep their bytes on disk, so the old column must allow empty
+    "ALTER TABLE ticket_attachment MODIFY Data MEDIUMBLOB NULL",
 ]
 for _sql in _ADDITIONS:
     try:

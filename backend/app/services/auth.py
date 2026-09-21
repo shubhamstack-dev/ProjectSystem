@@ -74,7 +74,7 @@ def _unb64(txt: str) -> bytes:
 def issue_token(user: M.AppUser) -> str:
     """A signed bearer token. The signature is over the whole payload, so the
     user id, the expiry and the flags cannot be edited by the holder."""
-    payload = {"uid": user.id, "eml": user.email,
+    payload = {"uid": user.id, "eml": user.email, "nam": user.display_name or user.email,
                "adm": int(user.is_admin), "typ": user.user_type,
                "exp": int(time.time()) + config.TOKEN_HOURS * 3600}
     body = _b64(json.dumps(payload, separators=(",", ":")).encode())

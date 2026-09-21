@@ -345,7 +345,12 @@ class TicketAttachment(Base):
     file_name: Mapped[str] = mapped_column("FileName", String(255), nullable=False)
     content_type: Mapped[str] = mapped_column("ContentType", String(120), nullable=False, default="application/octet-stream")
     size_bytes: Mapped[int] = mapped_column("SizeBytes", Integer, nullable=False, default=0)
-    data: Mapped[bytes] = mapped_column("Data", LargeBinary(length=(2 ** 24) - 1), nullable=False)  # MEDIUMBLOB
+    # Legacy: files attached before v1.5 were stored in this column. New files
+    # go to disk and leave it empty; both kinds are served the same way.
+    data: Mapped[bytes | None] = mapped_column("Data", LargeBinary(length=(2 ** 24) - 1), nullable=True)
+    storage_key: Mapped[str | None] = mapped_column("StorageKey", String(200))
+    sha256: Mapped[str | None] = mapped_column("Sha256", String(64))
+    kind: Mapped[str] = mapped_column("Kind", String(12), nullable=False, default="document")
     uploaded_by: Mapped[str] = mapped_column("UploadedBy", String(120), nullable=False, default="")
     uploaded_at_utc: Mapped[datetime] = mapped_column("UploadedAtUtc", DateTime, nullable=False)
 
@@ -380,6 +385,10 @@ class AppUser(Base):
     tenant_id: Mapped[str | None] = mapped_column("EntraTenantId", String(64))
     # Member = Aequm India staff. Guest = a customer invited into the tenant.
     user_type: Mapped[str] = mapped_column("UserType", String(10), nullable=False, default="Member")
+    # Set when an administrator issues a password; cleared when the holder
+    # chooses their own. A password somebody else has seen is not a secret.
+    must_change_password: Mapped[int] = mapped_column("MustChangePassword", Integer,
+                                                      nullable=False, default=0)
     # Which customer this account belongs to. Meaningful on Guests only: a
     # member of Aequm India is not "from" a customer, and leaving it empty on a
     # guest is what keeps an unassigned customer user from seeing anything.

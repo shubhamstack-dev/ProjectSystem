@@ -12,7 +12,12 @@ CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5
 # Signing key for the bearer tokens this API issues. Generated per process when
 # unset, which means restarting the API signs everyone out — acceptable in
 # development, so set it in .env for anything real.
-SECRET_KEY = os.getenv("SECRET_KEY") or os.urandom(32).hex()
+SECRET_KEY = os.getenv("SECRET_KEY") or ""
+if not SECRET_KEY:
+    SECRET_KEY = os.urandom(32).hex()
+    print("[startup] WARNING: SECRET_KEY is not set. A temporary one is in use, so every "
+          "restart will sign everyone out and break open attachment links. Set SECRET_KEY "
+          "in the environment.", flush=True)
 TOKEN_HOURS = int(os.getenv("TOKEN_HOURS", "12"))
 
 # Microsoft Entra ID (Azure AD). Leave blank and the product runs on local
@@ -35,3 +40,15 @@ ENTRA_GUEST_ROLE = os.getenv("ENTRA_GUEST_ROLE", "Customer Contact").strip()
 # account for themselves is a customer who can see another customer's tickets.
 ENTRA_AUTO_PROVISION_MEMBERS = os.getenv("ENTRA_AUTO_PROVISION_MEMBERS", "1") == "1"
 ENTRA_AUTO_PROVISION_GUESTS = os.getenv("ENTRA_AUTO_PROVISION_GUESTS", "0") == "1"
+
+# ---------------------------------------------------------------- v1.5 files
+# Attachments live on disk, not in the database. A phone video is 50-200 MB;
+# MySQL's MEDIUMBLOB stops at 16 MB and every byte would travel through
+# max_allowed_packet and the backup. The database keeps only the metadata.
+ATTACHMENT_DIR = os.getenv("ATTACHMENT_DIR", os.path.join(os.getcwd(), "data", "attachments"))
+MAX_FILE_MB = int(os.getenv("MAX_FILE_MB", "25"))       # images and documents
+MAX_VIDEO_MB = int(os.getenv("MAX_VIDEO_MB", "250"))    # screen recordings, phone video
+MAX_FILES_PER_CALL = int(os.getenv("MAX_FILES_PER_CALL", "10"))
+# How long a signed attachment link stays valid. Long enough to watch a video,
+# short enough that a copied link is not a permanent key.
+ATTACHMENT_LINK_MINUTES = int(os.getenv("ATTACHMENT_LINK_MINUTES", "60"))

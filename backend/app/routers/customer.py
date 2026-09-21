@@ -16,8 +16,28 @@ from ..schemas import ApprovalLineOut, CustomerProjectOut, DecisionIn
 from ..services import audit, plan
 from ..services.rules import NotFound, RuleViolation
 from .common import who
+from ..services.auth import Caller, current_user
 
 router = APIRouter(prefix="/api/customer", tags=["customer"])
+
+
+def _own_project(caller: Caller, db: Session, project_id: int) -> None:
+    """A customer account reaches only its own customer's projects. 404, not
+    403, so another customer's project is not confirmed to exist."""
+    if not caller.is_customer:
+        return
+    p = db.get(Project, project_id)
+    if p is None or p.customer_id != caller.user.customer_id:
+        raise NotFound(f"Project {project_id} not found.")
+
+
+def _own_activity(caller: Caller, db: Session, activity_id: int) -> None:
+    if not caller.is_customer:
+        return
+    a = db.get(Activity, activity_id)
+    if a is None:
+        raise NotFound(f"Line {activity_id} not found.")
+    _own_project(caller, db, a.project_id)
 
 
 def _utcnow() -> datetime:
@@ -25,7 +45,8 @@ def _utcnow() -> datetime:
 
 
 @router.get("/projects", response_model=list[CustomerProjectOut])
-def customer_projects(db: Session = Depends(get_db)):
+def customer_projects(db: Session = Depends(get_db),
+                      caller: Caller = Depends(current_user)):
     """Project status as the customer sees it, with how many line items wait
     for their decision."""
     pending = dict(db.execute(
@@ -34,7 +55,13 @@ def customer_projects(db: Session = Depends(get_db)):
         .where(DateApproval.status == "Pending")
         .group_by(Activity.project_id)).all())
     out = []
-    for pid in db.execute(select(Project.id).order_by(Project.code)).scalars().all():
+    q = select(Project.id).order_by(Project.code)
+    if caller.is_customer:
+        # Before sign-in existed this listed every project to everyone.
+        if not caller.user.customer_id:
+            return []
+        q = q.where(Project.customer_id == caller.user.customer_id)
+    for pid in db.execute(q).scalars().all():
         project = plan.load(db, pid)
         if project is None:
             continue
@@ -58,7 +85,9 @@ def customer_projects(db: Session = Depends(get_db)):
 
 
 @router.get("/projects/{project_id}/lines", response_model=list[ApprovalLineOut])
-def approval_lines(project_id: int, db: Session = Depends(get_db)):
+def approval_lines(project_id: int, db: Session = Depends(get_db),
+                   caller: Caller = Depends(current_user)):
+    _own_project(caller, db, project_id)
     """Every line item of the project that carries actual dates, with its
     approval state. Items without actuals are not listed - there is nothing
     to sign off yet."""
@@ -112,13 +141,17 @@ def _decide(db: Session, activity_id: int, actor: str, status: str, comment: str
 
 
 @router.post("/lines/{activity_id}/approve", response_model=ApprovalLineOut)
-def approve(activity_id: int, req: DecisionIn, db: Session = Depends(get_db), actor: str = Depends(who)):
+def approve(activity_id: int, req: DecisionIn, db: Session = Depends(get_db),
+            actor: str = Depends(who), caller: Caller = Depends(current_user)):
+    _own_activity(caller, db, activity_id)
     _decide(db, activity_id, actor, "Approved", req.comment)
     return _line(db, activity_id)
 
 
 @router.post("/lines/{activity_id}/reject", response_model=ApprovalLineOut)
-def reject(activity_id: int, req: DecisionIn, db: Session = Depends(get_db), actor: str = Depends(who)):
+def reject(activity_id: int, req: DecisionIn, db: Session = Depends(get_db),
+           actor: str = Depends(who), caller: Caller = Depends(current_user)):
+    _own_activity(caller, db, activity_id)
     if not req.comment or len(req.comment.strip()) < 3:
         raise RuleViolation("Write a comment so the team knows why the dates are rejected.")
     _decide(db, activity_id, actor, "Rejected", req.comment)

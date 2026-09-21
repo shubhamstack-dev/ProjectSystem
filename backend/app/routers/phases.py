@@ -11,6 +11,7 @@ from ..models import Person, Phase, PhaseAssignment, Project, Role
 from ..schemas import PhaseAssignmentIn, PhaseAssignmentOut, PhaseIn, PhaseOut
 from ..services import audit
 from ..services.rules import NotFound, RuleViolation
+from ..services.auth import Caller, current_user
 from .common import who
 
 router = APIRouter(prefix="/api", tags=["phases"])
@@ -38,7 +39,12 @@ def _load_phase(db: Session, phase_id: int) -> Phase:
 
 
 @router.get("/projects/{project_id}/phases", response_model=list[PhaseOut])
-def phases(project_id: int, db: Session = Depends(get_db)):
+def phases(project_id: int, db: Session = Depends(get_db),
+           caller: Caller = Depends(current_user)):
+    if caller.is_customer:
+        p = db.get(Project, project_id)
+        if p is None or p.customer_id != caller.user.customer_id:
+            raise NotFound(f"Project {project_id} not found.")
     if db.get(Project, project_id) is None:
         raise NotFound(f"Project {project_id} not found.")
     rows = db.execute(

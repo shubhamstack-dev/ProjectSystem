@@ -343,3 +343,62 @@ tr.muted td{opacity:.55}
 .notice.good{background:#f0fdf4;border-color:#bbf7d0;color:#15803d}
 .notice.warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
 .page-head p{color:#6b7280;font-size:13px;margin:4px 0 0;max-width:70ch}
+
+/* ======================================================= v1.5: uploads ===== */
+.upl-drop{display:flex;gap:12px;align-items:center;border:1.5px dashed #c7cbd6;
+  border-radius:10px;padding:14px 16px;cursor:pointer;background:#fafbfd;color:#475467}
+.upl-drop:hover,.upl-drop.over{border-color:#2563eb;background:#eff6ff;color:#1d4ed8}
+.upl-drop b{display:block;font-size:13.5px;color:#111827}
+.upl-drop span{display:block;font-size:12px;color:#6b7280;margin-top:2px}
+.upl-refused{margin-top:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;
+  border-radius:8px;padding:8px 11px;font-size:12.5px}
+.upl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:9px;
+  margin-top:10px}
+.upl-item{position:relative;border:1px solid #e5e7eb;border-radius:9px;overflow:hidden;
+  background:#fff}
+.upl-thumb{position:relative;height:78px;background:#f3f4f6;display:flex;
+  align-items:center;justify-content:center}
+.upl-thumb img,.upl-thumb video{width:100%;height:100%;object-fit:cover;display:block}
+.upl-doc{font-weight:700;font-size:12px;color:#475467;letter-spacing:.04em}
+.upl-badge{position:absolute;left:6px;bottom:6px;background:rgba(17,24,39,.75);color:#fff;
+  font-size:10px;padding:1px 6px;border-radius:10px}
+.upl-name{font-size:11.5px;padding:5px 7px 0;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.upl-size{font-size:10.5px;color:#9ca3af;padding:0 7px 6px}
+.upl-x{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;
+  border:0;background:rgba(17,24,39,.7);color:#fff;cursor:pointer;line-height:1;font-size:14px}
+.upl-total{font-size:12px;color:#6b7280;margin-top:6px}
+.upl-progress{margin-top:10px;font-size:12.5px;color:#374151}
+.upl-bar{height:6px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin-bottom:5px}
+.upl-bar i{display:block;height:100%;background:#2563eb;transition:width .15s}
+
+.gal{display:flex;flex-direction:column;gap:10px;margin:8px 0}
+.gal-imgs{display:flex;gap:8px;flex-wrap:wrap}
+.gal-img{border:1px solid #e5e7eb;border-radius:8px;padding:0;overflow:hidden;
+  width:132px;height:96px;cursor:zoom-in;background:#f3f4f6}
+.gal-img img{width:100%;height:100%;object-fit:cover;display:block}
+.gal-vid{margin:0;max-width:560px}
+.gal-vid video{width:100%;max-height:340px;border-radius:9px;background:#000;display:block}
+.gal-vid figcaption{font-size:11.5px;color:#6b7280;margin-top:4px}
+.gal-over{position:fixed;inset:0;background:rgba(10,12,20,.86);z-index:200;display:flex;
+  flex-direction:column;align-items:center;justify-content:center;cursor:zoom-out;padding:24px}
+.gal-over img{max-width:100%;max-height:86vh;border-radius:6px}
+.gal-cap{color:#d1d5db;font-size:12.5px;margin-top:10px}
+
+/* ================================================ v1.5: customer people == */
+.add-person{border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;background:#fafbfd}
+.add-person .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.add-person label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:#6b7280}
+.add-person input,.add-person select{padding:7px 9px;border:1px solid #d1d5db;
+  border-radius:7px;font:inherit;font-size:13.5px;color:#111827}
+.add-person .row-actions{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.issued{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px;
+  border:1.5px solid #2563eb;background:#eff6ff;border-radius:10px;padding:11px 14px}
+.issued b{display:block;font-size:13.5px}
+.issued span{display:block;font-size:12px;color:#475467;max-width:48ch}
+.issued code{font-size:17px;font-weight:600;letter-spacing:.06em;background:#fff;
+  border:1px solid #bfdbfe;border-radius:7px;padding:6px 11px}
+.ro{display:inline-block;padding:6px 0;font-weight:500}
+.cp-hint{color:#b45309;font-size:11.5px}
+.linkish{background:none;border:0;color:#6b7280;text-decoration:underline;cursor:pointer;
+  font:inherit;padding:0}

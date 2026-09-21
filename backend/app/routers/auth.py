@@ -48,6 +48,7 @@ def _user_out(u: M.AppUser, db: Session | None = None) -> dict:
             "person_id": u.person_id,
             "customer_id": u.customer_id,
             "customer": _customer_brief(db, u),
+            "must_change_password": bool(getattr(u, "must_change_password", 0)),
             "last_login_utc": u.last_login_utc}
 
 
@@ -69,6 +70,10 @@ def options():
         "microsoft_reason": None if E.configured() else
             "No Entra tenant is configured on this server",
         "directory_import": E.can_import(),
+        # The page checks these before uploading, so a 400 MB video is stopped
+        # in the browser rather than after it has been sent.
+        "uploads": {"max_file_mb": config.MAX_FILE_MB, "max_video_mb": config.MAX_VIDEO_MB,
+                    "max_files": config.MAX_FILES_PER_CALL},
     }
 
 
@@ -107,12 +112,16 @@ def change_password(body: dict = Body(...), caller: Caller = Depends(current_use
             "This account signs in through Microsoft, so its password is managed there")
     if not verify_password(body.get("current") or "", u.password_hash):
         raise HTTPException(401, "The current password is not right")
+    new = body.get("new") or ""
+    if new == (body.get("current") or ""):
+        raise HTTPException(422, "Choose a password different from the one you were given")
     try:
-        u.password_hash = hash_password(body.get("new") or "")
+        u.password_hash = hash_password(new)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    u.must_change_password = 0
     caller.db.commit()
-    return {"ok": True}
+    return {"ok": True, "user": _user_out(u, caller.db)}
 
 
 # ---------------------------------------------------------- Microsoft sign-in
@@ -400,6 +409,35 @@ def create_local_user(body: dict = Body(...), caller: Caller = Depends(require_a
     _ensure_person(db, u, None, None)
     db.commit()
     return _user_out(u)
+
+
+@router.post("/users/{uid}/reset-password")
+def reset_password(uid: int, caller: Caller = Depends(require_admin)):
+    """Issue a new one-time password for a local account.
+
+    The password is returned once and not kept: only its hash is stored. The
+    holder must replace it on their next sign-in, because a password an
+    administrator has seen is not a secret.
+    """
+    db = caller.db
+    u = db.get(M.AppUser, uid)
+    if not u:
+        raise HTTPException(404, "No such account")
+    if u.source != "local":
+        raise HTTPException(409, "This account signs in through Microsoft; its password is managed there")
+    temp = _temp_password()
+    u.password_hash = hash_password(temp)
+    u.must_change_password = 1
+    db.commit()
+    return {"user": _user_out(u, db), "temporary_password": temp}
+
+
+def _temp_password() -> str:
+    """Readable over the phone: no 0/O, 1/l/I, in groups of four."""
+    import secrets as _s
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
+    raw = "".join(_s.choice(alphabet) for _ in range(12))
+    return f"{raw[:4]}-{raw[4:8]}-{raw[8:]}"
 
 
 @router.put("/users/{uid}")

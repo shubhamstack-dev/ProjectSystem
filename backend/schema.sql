@@ -299,4 +299,24 @@ CREATE TABLE IF NOT EXISTS customer (
   Active TINYINT NOT NULL DEFAULT 1
 );
 
+ALTER TABLE project  ADD COLUMN CustomerId INT NULL;
+ALTER TABLE role     ADD COLUMN CustomerId INT NULL;
+ALTER TABLE app_user ADD COLUMN CustomerId INT NULL;
+ALTER TABLE project  ADD CONSTRAINT fk_project_customer
+  FOREIGN KEY (CustomerId) REFERENCES customer(Id) ON DELETE SET NULL;
+ALTER TABLE role     ADD CONSTRAINT fk_role_customer
+  FOREIGN KEY (CustomerId) REFERENCES customer(Id) ON DELETE SET NULL;
+ALTER TABLE app_user ADD CONSTRAINT fk_appuser_customer
+  FOREIGN KEY (CustomerId) REFERENCES customer(Id) ON DELETE SET NULL;
 
+-- ============================================================ v1.5
+-- Attachments move to disk; the row keeps the metadata. Data stays for files
+-- stored before v1.5 and is empty for everything after.
+ALTER TABLE ticket_attachment MODIFY Data MEDIUMBLOB NULL;
+ALTER TABLE ticket_attachment ADD COLUMN StorageKey VARCHAR(200) NULL;
+ALTER TABLE ticket_attachment ADD COLUMN Sha256 CHAR(64) NULL;
+ALTER TABLE ticket_attachment ADD COLUMN Kind VARCHAR(12) NOT NULL DEFAULT 'document';
+
+-- Set when an administrator issues a password; cleared when the holder
+-- chooses their own. Until then the account can only change its password.
+ALTER TABLE app_user ADD COLUMN MustChangePassword TINYINT NOT NULL DEFAULT 0;

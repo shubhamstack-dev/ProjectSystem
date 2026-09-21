@@ -47,6 +47,7 @@ class RoleOut(Camel):
     views: list[str]
     people_count: int
     is_customer: bool
+    customer_id: Optional[int] = None
 
 
 class PersonIn(Camel):
@@ -333,6 +334,8 @@ class TicketAttachmentOut(Camel):
     uploaded_by: str
     uploaded_at_utc: datetime
     response_id: Optional[int] = None
+    kind: str = "document"
+    url: str = ""
 
 
 class TicketResponseOut(Camel):

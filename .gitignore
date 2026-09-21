@@ -4,3 +4,10 @@ __pycache__/
 backend/.env
 frontend/node_modules/
 frontend/dist/
+
+# backups are written into the checkout by the steps in SERVER-STEPS.md;
+# from v1.3 on they contain password hashes, so they must never be committed
+backup-*.sql
+attachments-*.tgz
+*.sql.gz
+backend/data/

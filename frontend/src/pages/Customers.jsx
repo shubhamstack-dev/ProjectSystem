@@ -21,6 +21,7 @@ export default function Customers() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
+  const [issued, setIssued] = useState(null)
 
   async function load(keepId) {
     try {
@@ -178,27 +179,77 @@ export default function Customers() {
               </div>
 
               <h4 style={{ marginTop: 22 }}>Their people</h4>
-              <p className="muted">Accounts from the directory marked as guests. An Aequm
-                India account cannot be filed here.</p>
-              <table className="grid">
+              <p className="muted">Each of these can raise tickets on {sel.name}'s projects,
+                follow the team's replies and reply back — and nothing else.</p>
+
+              <AddPerson customer={sel} roles={roles} busy={busy}
+                         onAdded={async (r) => { setIssued(r); setMsg(r.message); await load(sel.id) }}
+                         onError={setErr} />
+              {issued && issued.temporary_password && (
+                <div className="issued">
+                  <div>
+                    <b>Password for {issued.user.display_name}</b>
+                    <span>Shown once and not stored. Pass it on privately — they will be asked
+                      to replace it when they first sign in.</span>
+                  </div>
+                  <code>{issued.temporary_password}</code>
+                  <button type="button" onClick={() => {
+                    navigator.clipboard?.writeText(issued.temporary_password)
+                    setMsg('Copied. It will not be shown again.')
+                  }}>Copy</button>
+                  <button type="button" onClick={() => setIssued(null)}>Done</button>
+                </div>
+              )}
+
+              <table className="grid" style={{ marginTop: 12 }}>
                 <thead><tr><th style={{ width: 34 }} /><th>Name</th><th>Address</th>
-                  <th>Source</th></tr></thead>
+                  <th>Role</th><th>Status</th><th style={{ width: 210 }} /></tr></thead>
                 <tbody>
                   {[...sel.users, ...guests].map(u => {
                     const on = sel.users.some(x => x.id === u.id)
                     return (
-                      <tr key={u.id}>
+                      <tr key={u.id} className={u.active === false ? 'muted' : ''}>
                         <td><input type="checkbox" checked={on} disabled={busy}
+                                   title={on ? 'Belongs to this customer' : 'Not filed under a customer yet'}
                                    onChange={e => assign('users', u.id, e.target.checked)} /></td>
-                        <td><b>{u.display_name}</b></td>
+                        <td><b>{u.display_name}</b>
+                          <small className="muted" style={{ display: 'block' }}>
+                            {u.source === 'entra' ? 'Microsoft' : 'Local'}</small></td>
                         <td className="mono">{u.email}</td>
-                        <td>{u.source === 'entra' ? 'Microsoft' : 'Local'}</td>
+                        <td>{u.role || '—'}</td>
+                        <td>{!on ? <span className="pill new">Not filed</span>
+                          : u.active === false ? <span className="pill off">Deactivated</span>
+                          : u.must_change_password ? <span className="pill new">Awaiting first sign-in</span>
+                          : u.last_login_utc ? <span className="pill here">Active</span>
+                          : <span className="pill member">Ready</span>}</td>
+                        <td className="r" style={{ whiteSpace: 'nowrap' }}>
+                          {on && u.source === 'local' && u.active !== false && (
+                            <button type="button" disabled={busy} onClick={async () => {
+                              setErr(''); setBusy(true)
+                              try {
+                                const r = await api.resetPassword(u.id)
+                                setIssued({ user: { display_name: u.display_name },
+                                            temporary_password: r.temporary_password })
+                                await load(sel.id)
+                              } catch (e) { setErr(e.message) } finally { setBusy(false) }
+                            }}>Reset password</button>
+                          )}
+                          {on && (
+                            <button type="button" disabled={busy} style={{ marginLeft: 6 }}
+                                    onClick={async () => {
+                              setErr(''); setBusy(true)
+                              try { await api.updateAccount(u.id, { active: u.active === false });
+                                    await load(sel.id) }
+                              catch (e) { setErr(e.message) } finally { setBusy(false) }
+                            }}>{u.active === false ? 'Reactivate' : 'Deactivate'}</button>
+                          )}
+                        </td>
                       </tr>
                     )
                   })}
                   {sel.users.length === 0 && guests.length === 0 && (
-                    <tr><td colSpan={4} className="empty">
-                      No customer accounts yet. Bring them in from the Directory first.
+                    <tr><td colSpan={6} className="empty">
+                      No one yet. Add a person above, or bring them in from the Directory.
                     </td></tr>
                   )}
                 </tbody>
@@ -208,5 +259,71 @@ export default function Customers() {
         </div>
       </div>
     </div>
+  )
+}
+
+
+/**
+ * Add a person to this customer. A password is generated unless one is typed,
+ * shown once, and has to be replaced at first sign-in.
+ */
+function AddPerson({ customer, roles, busy, onAdded, onError }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [roleId, setRoleId] = useState('')
+  const [pw, setPw] = useState('')
+  const [saving, setSaving] = useState(false)
+  // this customer's own roles first, then the shared ones
+  const mine = roles.filter(r => r.customerId === customer.id || r.customer_id === customer.id)
+  const shared = roles.filter(r => !(r.customerId || r.customer_id))
+  const ok = name.trim() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()) &&
+    (!pw || pw.length >= 8)
+
+  if (!open) {
+    return (
+      <button type="button" className="primary" onClick={() => setOpen(true)}
+              disabled={!customer.active}
+              title={customer.active ? '' : 'Reactivate the customer first'}>
+        Add a person
+      </button>
+    )
+  }
+  async function save(e) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const r = await api.addCustomerUser(customer.id, {
+        display_name: name.trim(), email: email.trim(),
+        role_id: roleId ? Number(roleId) : null, password: pw || null })
+      setName(''); setEmail(''); setPw(''); setRoleId(''); setOpen(false)
+      onAdded(r)
+    } catch (e2) { onError(e2.message) } finally { setSaving(false) }
+  }
+  return (
+    <form className="add-person" onSubmit={save}>
+      <div className="row">
+        <label>Name<input value={name} onChange={e => setName(e.target.value)} autoFocus /></label>
+        <label>Work email<input type="email" value={email}
+                                onChange={e => setEmail(e.target.value)} /></label>
+        <label>Role
+          <select value={roleId} onChange={e => setRoleId(e.target.value)}>
+            <option value="">{mine.length ? mine[0].name + ' (default)' : 'Customer Contact (default)'}</option>
+            {mine.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            {shared.length > 0 && <optgroup label="Shared by all customers">
+              {shared.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </optgroup>}
+          </select></label>
+        <label>Password <small className="muted">(optional)</small>
+          <input type="text" value={pw} onChange={e => setPw(e.target.value)}
+                 placeholder="Leave empty to generate one" autoComplete="off" /></label>
+      </div>
+      <div className="row-actions">
+        <button type="submit" className="primary" disabled={busy || saving || !ok}>
+          {saving ? 'Adding…' : 'Add to ' + customer.name}</button>
+        <button type="button" onClick={() => setOpen(false)}>Cancel</button>
+        <small className="muted">They will be asked to choose their own password on first sign-in.</small>
+      </div>
+    </form>
   )
 }

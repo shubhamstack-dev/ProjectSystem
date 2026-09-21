@@ -20,6 +20,10 @@ export function setToken(t) {
 export function getToken() { return token }
 export function onSignedOut(fn) { onUnauthorised = fn }
 
+let currentUser = null
+export function setCurrentUser(u) { currentUser = u }
+export function getCurrentUser() { return currentUser }
+
 function authHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
@@ -78,26 +82,39 @@ function detailText(data) {
 
 
 // Multipart variant - used by tickets so documents can travel with the call.
-async function callForm(method, url, fields, files) {
+// Multipart upload through XMLHttpRequest rather than fetch: fetch still has no
+// upload progress, and a 200 MB video with no progress bar looks like a hang.
+function callForm(method, url, fields, files, onProgress) {
   const fd = new FormData()
   for (const [k, v] of Object.entries(fields)) {
     if (v !== undefined && v !== null && v !== '') fd.append(k, v)
   }
   for (const f of files || []) fd.append('files', f)
-  const res = await fetch(url, {
-    method,
-    headers: { ...authHeaders(), ...(actingAs ? { 'X-Acting-As': actingAs } : {}) },
-    body: fd,
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open(method, url)
+    const h = { ...authHeaders(), ...(actingAs ? { 'X-Acting-As': actingAs } : {}) }
+    for (const [k, v] of Object.entries(h)) xhr.setRequestHeader(k, v)
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded / e.total, e.loaded, e.total)
+      }
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'The upload could not reach the server.'))
+    xhr.onload = () => {
+      if (xhr.status === 204) return resolve(null)
+      let data = null
+      try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null } catch { data = null }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        guard(xhr.status)
+        const message = data?.message || detailText(data) ||
+          (xhr.status === 413 ? 'That upload is larger than the server accepts.' : xhr.statusText)
+        return reject(new ApiError(xhr.status, message, data?.blockers))
+      }
+      resolve(data)
+    }
+    xhr.send(fd)
   })
-  if (res.status === 204) return null
-  const text = await res.text()
-  const data = text ? JSON.parse(text) : null
-  if (!res.ok) {
-    guard(res.status)
-    const message = data?.message || detailText(data) || res.statusText
-    throw new ApiError(res.status, message, data?.blockers)
-  }
-  return data
 }
 
 export const api = {
@@ -128,6 +145,8 @@ export const api = {
     call('PUT', `/api/customers/${id}/projects`, { project_ids: projectIds }),
   setCustomerRoles: (id, roleIds) =>
     call('PUT', `/api/customers/${id}/roles`, { role_ids: roleIds }),
+  addCustomerUser: (id, body) => call('POST', `/api/customers/${id}/users/new`, body),
+  resetPassword: (uid) => call('POST', `/api/auth/users/${uid}/reset-password`),
   setCustomerUsers: (id, userIds) =>
     call('PUT', `/api/customers/${id}/users`, { user_ids: userIds }),
   unassignedGuests: () => call('GET', '/api/customers/unassigned'),
@@ -194,10 +213,12 @@ export const api = {
   deleteTicketModule: (id) => call('DELETE', `/api/tickets/modules/${id}`),
   tickets: (params) => call('GET', '/api/tickets?' + new URLSearchParams(params || {}).toString()),
   ticket: (id) => call('GET', `/api/tickets/${id}`),
-  createTicket: (fields, files) => callForm('POST', '/api/tickets', fields, files),
+  createTicket: (fields, files, onProgress) =>
+    callForm('POST', '/api/tickets', fields, files, onProgress),
   updateTicket: (id, t) => call('PUT', `/api/tickets/${id}`, t),
   deleteTicket: (id) => call('DELETE', `/api/tickets/${id}`),
-  respondTicket: (id, body, files) => callForm('POST', `/api/tickets/${id}/responses`, { body }, files),
+  respondTicket: (id, body, files, onProgress) =>
+    callForm('POST', `/api/tickets/${id}/responses`, { body }, files, onProgress),
   attachmentUrl: (id) => `/api/tickets/attachments/${id}`,
   // audit
   audit: (params) => call('GET', '/api/audit?' + new URLSearchParams(params).toString()),

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Route, Routes, Navigate } from 'react-router-dom'
-import { api, getActingAs, setActingAs, getToken, setToken, onSignedOut } from './api.js'
+import { api, getActingAs, setActingAs, getToken, setToken, onSignedOut, setCurrentUser } from './api.js'
+import ChangePassword from './pages/ChangePassword.jsx'
 import Portfolio from './pages/Portfolio.jsx'
 import Plan from './pages/Plan.jsx'
 import Team from './pages/Team.jsx'
@@ -44,6 +45,7 @@ export default function App() {
   // Whoever is signed in is who the audit trail records. The typed-in name is
   // gone: it was a label anybody could change to anybody else's.
   useEffect(() => {
+    setCurrentUser(user)
     if (user) setActingAs(user.display_name || user.email)
   }, [user])
 
@@ -54,7 +56,13 @@ export default function App() {
   }
 
   if (checking) return <div className="boot">Checking your session…</div>
-  if (!user) return <SignIn onSignedIn={setUser} />
+  if (!user) return <SignIn onSignedIn={(u) => { setCurrentUser(u); setUser(u) }} />
+  // A password somebody else issued has to be replaced before anything else.
+  // The API holds the account to this too; the screen just says so kindly.
+  if (user.must_change_password) {
+    return <ChangePassword user={user} onDone={(u) => { setCurrentUser(u); setUser(u) }}
+                           onSignOut={signOut} />
+  }
 
   return (
     <div className="shell">
@@ -64,26 +72,32 @@ export default function App() {
           <span>ProjectSystem</span>
         </div>
         <nav>
-          <NavLink to="/" end>{I.portfolio}<span>Portfolio</span></NavLink>
-          <NavLink to="/plan">{I.plan}<span>Plan</span></NavLink>
-          <NavLink to="/milestones">{I.miles}<span>Milestones</span></NavLink>
-          <NavLink to="/assignments">{I.assign}<span>Assignments</span></NavLink>
-          <NavLink to="/phases">{I.phases}<span>Phases</span></NavLink>
-          <NavLink to="/tickets">{I.tickets}<span>Tickets</span></NavLink>
-          {!user.is_customer && (
-            <NavLink to="/processes">{I.cfg}<span>Processes</span></NavLink>
+          {user.is_customer ? (
+            /* A customer account sees what it can use and nothing else. The API
+               refuses the rest; offering those screens would only lead to errors. */
+            <NavLink to="/tickets">{I.tickets}<span>Tickets</span></NavLink>
+          ) : (
+            <>
+              <NavLink to="/" end>{I.portfolio}<span>Portfolio</span></NavLink>
+              <NavLink to="/plan">{I.plan}<span>Plan</span></NavLink>
+              <NavLink to="/milestones">{I.miles}<span>Milestones</span></NavLink>
+              <NavLink to="/assignments">{I.assign}<span>Assignments</span></NavLink>
+              <NavLink to="/phases">{I.phases}<span>Phases</span></NavLink>
+              <NavLink to="/tickets">{I.tickets}<span>Tickets</span></NavLink>
+              <NavLink to="/processes">{I.cfg}<span>Processes</span></NavLink>
+              <NavLink to="/ticket-setup">{I.cfg}<span>Ticket setup</span></NavLink>
+              <div className="navsec">Roles</div>
+              <NavLink to="/team">{I.team}<span>Team Roles</span></NavLink>
+              <NavLink to="/customer-roles">{I.customer}<span>Customer Roles</span></NavLink>
+              {user.is_admin && (
+                <NavLink to="/customers">{I.customer}<span>Customers</span></NavLink>
+              )}
+              {user.is_admin && (
+                <NavLink to="/directory">{I.team}<span>Directory</span></NavLink>
+              )}
+              <NavLink to="/audit">{I.audit}<span>Audit trail</span></NavLink>
+            </>
           )}
-          <NavLink to="/ticket-setup">{I.cfg}<span>Ticket setup</span></NavLink>
-          <div className="navsec">Roles</div>
-          <NavLink to="/team">{I.team}<span>Team Roles</span></NavLink>
-          <NavLink to="/customer-roles">{I.customer}<span>Customer Roles</span></NavLink>
-          {user.is_admin && (
-            <NavLink to="/customers">{I.customer}<span>Customers</span></NavLink>
-          )}
-          {user.is_admin && (
-            <NavLink to="/directory">{I.team}<span>Directory</span></NavLink>
-          )}
-          <NavLink to="/audit">{I.audit}<span>Audit trail</span></NavLink>
         </nav>
         <div className="grow" />
         <div className="who">
@@ -114,26 +128,33 @@ export default function App() {
             visible. Ask Aequm India to assign one.
           </div>
         )}
-        <Routes>
-          <Route path="/" element={<Portfolio />} />
-          <Route path="/plan" element={<Plan />} />
-          <Route path="/plan/:projectId" element={<Plan />} />
-          <Route path="/milestones" element={<Milestones />} />
-          <Route path="/assignments" element={<Assignments />} />
-          <Route path="/team" element={<Team />} />
-          <Route path="/customer-roles" element={<CustomerRoles />} />
-          <Route path="/phases" element={<Phases />} />
-          <Route path="/tickets" element={<Tickets />} />
-          <Route path="/ticket-setup" element={<TicketModules />} />
-          <Route path="/processes" element={<Processes />} />
-          <Route path="/customers" element={
-            user.is_admin ? <Customers /> : <Navigate to="/" />} />
-          <Route path="/directory" element={
-            user.is_admin ? <Directory /> : <Navigate to="/" />} />
-          <Route path="/auth/callback" element={<Navigate to="/" />} />
-          <Route path="/audit" element={<Audit />} />
-          <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
+        {user.is_customer ? (
+          <Routes>
+            <Route path="/tickets" element={<Tickets />} />
+            <Route path="*" element={<Navigate to="/tickets" />} />
+          </Routes>
+        ) : (
+          <Routes>
+            <Route path="/" element={<Portfolio />} />
+            <Route path="/plan" element={<Plan />} />
+            <Route path="/plan/:projectId" element={<Plan />} />
+            <Route path="/milestones" element={<Milestones />} />
+            <Route path="/assignments" element={<Assignments />} />
+            <Route path="/team" element={<Team />} />
+            <Route path="/customer-roles" element={<CustomerRoles />} />
+            <Route path="/phases" element={<Phases />} />
+            <Route path="/tickets" element={<Tickets />} />
+            <Route path="/ticket-setup" element={<TicketModules />} />
+            <Route path="/processes" element={<Processes />} />
+            <Route path="/customers" element={
+              user.is_admin ? <Customers /> : <Navigate to="/" />} />
+            <Route path="/directory" element={
+              user.is_admin ? <Directory /> : <Navigate to="/" />} />
+            <Route path="/auth/callback" element={<Navigate to="/" />} />
+            <Route path="/audit" element={<Audit />} />
+            <Route path="*" element={<Navigate to="/" />} />
+          </Routes>
+        )}
       </main>
     </div>
   )

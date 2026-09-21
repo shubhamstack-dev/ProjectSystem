@@ -73,7 +73,7 @@ def delete_organisation(org_id: int, db: Session = Depends(get_db), actor: str =
 
 # ---- roles ------------------------------------------------------------------
 def _role_out(r: Role) -> RoleOut:
-    return RoleOut(id=r.id, name=r.name, responsibilities=r.responsibilities, colour=r.colour,
+    return RoleOut(id=r.id, customer_id=getattr(r, "customer_id", None), name=r.name, responsibilities=r.responsibilities, colour=r.colour,
                    organisation_id=r.organisation_id,
                    organisation_name=r.organisation.name if r.organisation else None,
                    views=[v for v in r.view_access.split(",") if v], people_count=len(r.people),
