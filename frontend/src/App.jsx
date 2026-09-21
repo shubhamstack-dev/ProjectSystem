@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Route, Routes, Navigate } from 'react-router-dom'
-import { getActingAs, setActingAs } from './api.js'
+import { api, getActingAs, setActingAs, getToken, setToken, onSignedOut } from './api.js'
 import Portfolio from './pages/Portfolio.jsx'
 import Plan from './pages/Plan.jsx'
 import Team from './pages/Team.jsx'
@@ -11,6 +11,10 @@ import CustomerRoles from './pages/CustomerRoles.jsx'
 import Phases from './pages/Phases.jsx'
 import Tickets from './pages/Tickets.jsx'
 import TicketModules from './pages/TicketModules.jsx'
+import SignIn from './pages/SignIn.jsx'
+import Directory from './pages/Directory.jsx'
+import Processes from './pages/Processes.jsx'
+import Customers from './pages/Customers.jsx'
 
 const I = {
   portfolio: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>,
@@ -26,8 +30,31 @@ const I = {
 }
 
 export default function App() {
-  const [who, setWho] = useState(getActingAs())
-  useEffect(() => { setActingAs(who) }, [who])
+  const [user, setUser] = useState(null)
+  const [checking, setChecking] = useState(true)
+
+  // A token in sessionStorage may be expired or belong to a deleted account,
+  // so it is only trusted once the API has confirmed it.
+  useEffect(() => {
+    onSignedOut(() => { setToken(''); setUser(null) })
+    if (!getToken()) { setChecking(false); return }
+    api.me().then(setUser).catch(() => setToken('')).finally(() => setChecking(false))
+  }, [])
+
+  // Whoever is signed in is who the audit trail records. The typed-in name is
+  // gone: it was a label anybody could change to anybody else's.
+  useEffect(() => {
+    if (user) setActingAs(user.display_name || user.email)
+  }, [user])
+
+  function signOut() {
+    setToken('')
+    setUser(null)
+    window.location.href = '/'
+  }
+
+  if (checking) return <div className="boot">Checking your session…</div>
+  if (!user) return <SignIn onSignedIn={setUser} />
 
   return (
     <div className="shell">
@@ -43,20 +70,50 @@ export default function App() {
           <NavLink to="/assignments">{I.assign}<span>Assignments</span></NavLink>
           <NavLink to="/phases">{I.phases}<span>Phases</span></NavLink>
           <NavLink to="/tickets">{I.tickets}<span>Tickets</span></NavLink>
+          {!user.is_customer && (
+            <NavLink to="/processes">{I.cfg}<span>Processes</span></NavLink>
+          )}
           <NavLink to="/ticket-setup">{I.cfg}<span>Ticket setup</span></NavLink>
           <div className="navsec">Roles</div>
           <NavLink to="/team">{I.team}<span>Team Roles</span></NavLink>
           <NavLink to="/customer-roles">{I.customer}<span>Customer Roles</span></NavLink>
+          {user.is_admin && (
+            <NavLink to="/customers">{I.customer}<span>Customers</span></NavLink>
+          )}
+          {user.is_admin && (
+            <NavLink to="/directory">{I.team}<span>Directory</span></NavLink>
+          )}
           <NavLink to="/audit">{I.audit}<span>Audit trail</span></NavLink>
         </nav>
         <div className="grow" />
         <div className="who">
-          <label htmlFor="who">Acting as</label>
-          <input id="who" placeholder="Your name" value={who} onChange={(e) => setWho(e.target.value)} />
-          <div className="hint">Recorded in the audit trail with every change.</div>
+          <div className="signed-in">
+            <div className="avatar" aria-hidden="true">
+              {(user.display_name || user.email).slice(0, 1).toUpperCase()}
+            </div>
+            <div className="sig-who">
+              <b>{user.display_name}</b>
+              <small>{user.email}</small>
+              <small className="sig-tags">
+                {user.is_admin && <span className="pill admin">Administrator</span>}
+                <span className={`pill ${user.is_customer ? 'guest' : 'member'}`}>
+                  {user.is_customer ? (user.customer?.name || 'Customer') : 'Aequm India'}
+                </span>
+                <span className="pill src">{user.source === 'entra' ? 'Microsoft' : 'Local'}</span>
+              </small>
+            </div>
+          </div>
+          <button className="signout" onClick={signOut}>Sign out</button>
+          <div className="hint">Every change is recorded against this account.</div>
         </div>
       </aside>
       <main className="main">
+        {user.is_customer && !user.customer && (
+          <div className="notice warn" style={{ margin: '14px 22px 0' }}>
+            No customer has been assigned to this account yet, so no projects are
+            visible. Ask Aequm India to assign one.
+          </div>
+        )}
         <Routes>
           <Route path="/" element={<Portfolio />} />
           <Route path="/plan" element={<Plan />} />
@@ -68,6 +125,12 @@ export default function App() {
           <Route path="/phases" element={<Phases />} />
           <Route path="/tickets" element={<Tickets />} />
           <Route path="/ticket-setup" element={<TicketModules />} />
+          <Route path="/processes" element={<Processes />} />
+          <Route path="/customers" element={
+            user.is_admin ? <Customers /> : <Navigate to="/" />} />
+          <Route path="/directory" element={
+            user.is_admin ? <Directory /> : <Navigate to="/" />} />
+          <Route path="/auth/callback" element={<Navigate to="/" />} />
           <Route path="/audit" element={<Audit />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

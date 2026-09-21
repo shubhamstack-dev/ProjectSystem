@@ -354,6 +354,10 @@ class TicketOut(Camel):
     module_id: Optional[int]
     module_name: Optional[str]
     module_type: Optional[str]
+    process_id: Optional[int] = None
+    process_name: Optional[str] = None
+    process_step_id: Optional[int] = None
+    process_step_name: Optional[str] = None
     title: str
     description: Optional[str]
     priority: str
@@ -376,3 +380,5 @@ class TicketUpdateIn(Camel):
     assignee_id: Optional[int] = None
     module_id: Optional[int] = None
     phase_id: Optional[int] = None
+    process_id: Optional[int] = None
+    process_step_id: Optional[int] = None

@@ -220,3 +220,83 @@ CREATE TABLE IF NOT EXISTS ticket_attachment (
   CONSTRAINT fk_tatt_response FOREIGN KEY (ResponseId) REFERENCES ticket_response(Id) ON DELETE CASCADE,
   INDEX ix_ticket_attachment (TicketId)
 );
+
+-- ============================================================ v1.3
+CREATE TABLE IF NOT EXISTS app_user (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  PersonId INT NULL,
+  Email VARCHAR(200) NOT NULL UNIQUE,
+  DisplayName VARCHAR(200) NOT NULL,
+  Source VARCHAR(10) NOT NULL DEFAULT 'local',
+  EntraOid VARCHAR(64) NULL UNIQUE,
+  EntraTenantId VARCHAR(64) NULL,
+  UserType VARCHAR(10) NOT NULL DEFAULT 'Member',
+  PasswordHash VARCHAR(255) NULL,
+  IsAdmin TINYINT NOT NULL DEFAULT 0,
+  Active TINYINT NOT NULL DEFAULT 1,
+  LastLoginUtc DATETIME NULL,
+  CreatedAtUtc DATETIME NOT NULL,
+  CONSTRAINT fk_appuser_person FOREIGN KEY (PersonId) REFERENCES person(Id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS directory_sync (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  RunBy VARCHAR(120) NOT NULL DEFAULT '',
+  RunAtUtc DATETIME NOT NULL,
+  Fetched INT NOT NULL DEFAULT 0,
+  Created INT NOT NULL DEFAULT 0,
+  Updated INT NOT NULL DEFAULT 0,
+  Skipped INT NOT NULL DEFAULT 0,
+  Detail TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS process (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  Name VARCHAR(160) NOT NULL UNIQUE,
+  Code VARCHAR(40) NULL,
+  Description VARCHAR(1000) NULL,
+  Active TINYINT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS process_step (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  ProcessId INT NOT NULL,
+  Name VARCHAR(160) NOT NULL,
+  Description VARCHAR(1000) NULL,
+  SortOrder INT NOT NULL DEFAULT 0,
+  OwnerRoleId INT NULL,
+  Active TINYINT NOT NULL DEFAULT 1,
+  CONSTRAINT fk_step_process FOREIGN KEY (ProcessId) REFERENCES process(Id) ON DELETE CASCADE,
+  CONSTRAINT fk_step_role FOREIGN KEY (OwnerRoleId) REFERENCES role(Id) ON DELETE SET NULL,
+  CONSTRAINT uq_step_name UNIQUE (ProcessId, Name),
+  INDEX ix_step_process (ProcessId)
+);
+
+-- Many to many on purpose: one process is run by several modules.
+CREATE TABLE IF NOT EXISTS module_process (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  ModuleId INT NOT NULL,
+  ProcessId INT NOT NULL,
+  SortOrder INT NOT NULL DEFAULT 0,
+  CONSTRAINT fk_mp_module FOREIGN KEY (ModuleId) REFERENCES ticket_module(Id) ON DELETE CASCADE,
+  CONSTRAINT fk_mp_process FOREIGN KEY (ProcessId) REFERENCES process(Id) ON DELETE CASCADE,
+  CONSTRAINT uq_module_process UNIQUE (ModuleId, ProcessId)
+);
+
+ALTER TABLE ticket ADD COLUMN ProcessId INT NULL;
+ALTER TABLE ticket ADD COLUMN ProcessStepId INT NULL;
+
+-- ============================================================ v1.4
+CREATE TABLE IF NOT EXISTS counter (
+  Name VARCHAR(40) PRIMARY KEY,
+  Value INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS customer (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  Code VARCHAR(20) NOT NULL UNIQUE,
+  Name VARCHAR(200) NOT NULL UNIQUE,
+  Active TINYINT NOT NULL DEFAULT 1
+);
+
+

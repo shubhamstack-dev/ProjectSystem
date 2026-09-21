@@ -15,29 +15,28 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import database, models  # noqa: E402
 from app.main import app  # noqa: E402
+from tests.harness import client, Testing, make_account, H as _H, ok as _ok  # noqa: E402
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+c = client
+c.headers.update({"X-Acting-As": "tester"})
 
-
-@event.listens_for(engine, "connect")
-def _fk_on(conn, _):
-    conn.execute("PRAGMA foreign_keys=ON")
-
-
-database.Base.metadata.create_all(engine)
-Testing = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-
-
-def override_db():
+# v1.3 shut the API: every call needs a signed-in account. One administrator is
+# made here and its token put on the client, so the rest of this suite reads
+# exactly as it did before.
+def _sign_in():
+    from datetime import datetime, timezone
+    from app import models as _M
+    from app.services.auth import hash_password as _hp, issue_token as _it
     db = Testing()
-    try:
-        yield db
-    finally:
-        db.close()
+    u = _M.AppUser(email="api.tester@aequm.in", display_name="tester", source="local",
+                   user_type="Member", password_hash=_hp("a long test password"),
+                   is_admin=1, active=1,
+                   created_at_utc=datetime.now(timezone.utc).replace(tzinfo=None))
+    db.add(u); db.commit(); db.close()
+    return _it(u)
 
 
-app.dependency_overrides[database.get_db] = override_db
-c = TestClient(app, headers={"X-Acting-As": "tester"})
+c.headers.update({"Authorization": f"Bearer {_sign_in()}"})
 
 
 def ok(r, code=200):

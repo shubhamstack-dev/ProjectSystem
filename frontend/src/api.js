@@ -6,6 +6,30 @@
 
 let actingAs = localStorage.getItem('actingAs') || ''
 
+// The bearer token issued by /api/auth. Held in memory and mirrored to
+// sessionStorage rather than localStorage: a token in localStorage outlives
+// the browser being closed, which is exactly what a shared machine should not do.
+let token = sessionStorage.getItem('ps.token') || ''
+let onUnauthorised = null
+
+export function setToken(t) {
+  token = t || ''
+  if (token) sessionStorage.setItem('ps.token', token)
+  else sessionStorage.removeItem('ps.token')
+}
+export function getToken() { return token }
+export function onSignedOut(fn) { onUnauthorised = fn }
+
+function authHeaders() {
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+function guard(status) {
+  // One expired token would otherwise surface as a different confusing error
+  // on every screen at once.
+  if (status === 401 && onUnauthorised) onUnauthorised()
+}
+
 export function setActingAs(name) {
   actingAs = name
   localStorage.setItem('actingAs', name)
@@ -27,6 +51,7 @@ async function call(method, url, body) {
     method,
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(),
       ...(actingAs ? { 'X-Acting-As': actingAs } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -35,10 +60,20 @@ async function call(method, url, body) {
   const text = await res.text()
   const data = text ? JSON.parse(text) : null
   if (!res.ok) {
-    const message = data?.message || (data?.detail && JSON.stringify(data.detail)) || res.statusText
+    guard(res.status)
+    const message = data?.message || detailText(data) || res.statusText
     throw new ApiError(res.status, message, data?.blockers)
   }
   return data
+}
+
+/** FastAPI puts a plain refusal in detail and a validation list there too. */
+function detailText(data) {
+  const d = data?.detail
+  if (!d) return null
+  if (typeof d === 'string') return d
+  if (Array.isArray(d)) return d.map(x => x.msg || JSON.stringify(x)).join('; ')
+  return JSON.stringify(d)
 }
 
 
@@ -51,20 +86,67 @@ async function callForm(method, url, fields, files) {
   for (const f of files || []) fd.append('files', f)
   const res = await fetch(url, {
     method,
-    headers: { ...(actingAs ? { 'X-Acting-As': actingAs } : {}) },
+    headers: { ...authHeaders(), ...(actingAs ? { 'X-Acting-As': actingAs } : {}) },
     body: fd,
   })
   if (res.status === 204) return null
   const text = await res.text()
   const data = text ? JSON.parse(text) : null
   if (!res.ok) {
-    const message = data?.message || (data?.detail && JSON.stringify(data.detail)) || res.statusText
+    guard(res.status)
+    const message = data?.message || detailText(data) || res.statusText
     throw new ApiError(res.status, message, data?.blockers)
   }
   return data
 }
 
 export const api = {
+  // ---- sign-in and the directory
+  authOptions: () => call('GET', '/api/auth/options'),
+  login: (email, password) => call('POST', '/api/auth/login', { email, password }),
+  me: () => call('GET', '/api/auth/me'),
+  changePassword: (current, next) => call('POST', '/api/auth/password', { current, new: next }),
+  msStart: (redirectUri) =>
+    call('GET', `/api/auth/microsoft/start?redirect_uri=${encodeURIComponent(redirectUri)}`),
+  msCallback: (code, state, redirectUri) =>
+    call('POST', '/api/auth/microsoft/callback', { code, state, redirect_uri: redirectUri }),
+  directoryUsers: (search) =>
+    call('GET', `/api/auth/directory/users${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  directoryImport: (body) => call('POST', '/api/auth/directory/import', body || {}),
+  directoryHistory: () => call('GET', '/api/auth/directory/history'),
+  accounts: () => call('GET', '/api/auth/users'),
+  createAccount: (body) => call('POST', '/api/auth/users', body),
+  updateAccount: (id, body) => call('PUT', `/api/auth/users/${id}`, body),
+
+  // ---- the customer master
+  customers: () => call('GET', '/api/customers'),
+  nextCustomerCode: () => call('GET', '/api/customers/next-code'),
+  createCustomer: (name) => call('POST', '/api/customers', { name }),
+  updateCustomer: (id, body) => call('PUT', `/api/customers/${id}`, body),
+  deleteCustomer: (id) => call('DELETE', `/api/customers/${id}`),
+  setCustomerProjects: (id, projectIds) =>
+    call('PUT', `/api/customers/${id}/projects`, { project_ids: projectIds }),
+  setCustomerRoles: (id, roleIds) =>
+    call('PUT', `/api/customers/${id}/roles`, { role_ids: roleIds }),
+  setCustomerUsers: (id, userIds) =>
+    call('PUT', `/api/customers/${id}/users`, { user_ids: userIds }),
+  unassignedGuests: () => call('GET', '/api/customers/unassigned'),
+
+  // ---- processes and their steps
+  processes: (moduleId) =>
+    call('GET', `/api/processes${moduleId ? `?module_id=${moduleId}` : ''}`),
+  createProcess: (body) => call('POST', '/api/processes', body),
+  updateProcess: (id, body) => call('PUT', `/api/processes/${id}`, body),
+  deleteProcess: (id) => call('DELETE', `/api/processes/${id}`),
+  addStep: (pid, body) => call('POST', `/api/processes/${pid}/steps`, body),
+  updateStep: (sid, body) => call('PUT', `/api/steps/${sid}`, body),
+  deleteStep: (sid) => call('DELETE', `/api/steps/${sid}`),
+  reorderSteps: (pid, stepIds) =>
+    call('PUT', `/api/processes/${pid}/steps/order`, { step_ids: stepIds }),
+  moduleProcesses: (mid) => call('GET', `/api/modules/${mid}/processes`),
+  setModuleProcesses: (mid, processIds) =>
+    call('PUT', `/api/modules/${mid}/processes`, { process_ids: processIds }),
+
   // projects
   projects: () => call('GET', '/api/projects'),
   project: (id) => call('GET', `/api/projects/${id}`),

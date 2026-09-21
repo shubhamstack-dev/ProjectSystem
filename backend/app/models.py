@@ -39,6 +39,9 @@ class Role(Base):
     view_access: Mapped[str] = mapped_column("ViewAccess", String(200), nullable=False,
                                              default="portfolio,plan,assign,miles")
     is_customer: Mapped[int] = mapped_column("IsCustomer", Integer, nullable=False, default=0)
+    # Set only on customer roles, and only when the role is specific to one
+    # customer. Left empty the role is shared by all of them.
+    customer_id: Mapped[int | None] = mapped_column("CustomerId", ForeignKey("customer.Id", ondelete="SET NULL"))
     organisation_id: Mapped[int | None] = mapped_column("OrganisationId", ForeignKey("organisation.Id", ondelete="SET NULL"))
 
     organisation: Mapped[Organisation | None] = relationship(back_populates="roles")
@@ -55,6 +58,35 @@ class Person(Base):
     role: Mapped[Role | None] = relationship(back_populates="people")
 
 
+class Counter(Base):
+    """A number that only ever goes up.
+
+    Customer codes cannot come from the row id: SQLite reuses the highest rowid
+    after a delete, and even MySQL's AUTO_INCREMENT has been reset by a restart
+    in some versions. A code that is handed out twice is printed on two
+    customers' correspondence, and no later fix un-prints it.
+    """
+    __tablename__ = "counter"
+    name: Mapped[str] = mapped_column("Name", String(40), primary_key=True)
+    value: Mapped[int] = mapped_column("Value", Integer, nullable=False, default=0)
+
+
+class Customer(Base):
+    """The customer organisation a project is delivered for.
+
+    Deliberately thin: a code and a name. Everything else about a customer —
+    who their people are, which projects are theirs, which roles they hold —
+    is an assignment made elsewhere rather than a field copied onto this row.
+    """
+    __tablename__ = "customer"
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column("Code", String(20), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column("Name", String(200), nullable=False, unique=True)
+    active: Mapped[int] = mapped_column("Active", Integer, nullable=False, default=1)
+
+    projects: Mapped[list["Project"]] = relationship(back_populates="customer")
+
+
 class Project(Base):
     __tablename__ = "project"
     id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
@@ -65,9 +97,11 @@ class Project(Base):
     status: Mapped[int] = mapped_column("Status", Integer, nullable=False, default=0)
     notes: Mapped[str | None] = mapped_column("Notes", Text)
     organisation_id: Mapped[int | None] = mapped_column("OrganisationId", ForeignKey("organisation.Id", ondelete="SET NULL"))
+    customer_id: Mapped[int | None] = mapped_column("CustomerId", ForeignKey("customer.Id", ondelete="SET NULL"))
     owner_id: Mapped[int | None] = mapped_column("OwnerId", ForeignKey("person.Id", ondelete="SET NULL"))
 
     organisation: Mapped[Organisation | None] = relationship(back_populates="projects")
+    customer: Mapped["Customer | None"] = relationship(back_populates="projects")
     owner: Mapped[Person | None] = relationship(foreign_keys=[owner_id])
     team: Mapped[list["ProjectTeamMember"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     holidays: Mapped[list["Holiday"]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -257,6 +291,8 @@ class Ticket(Base):
     project_id: Mapped[int] = mapped_column("ProjectId", ForeignKey("project.Id", ondelete="CASCADE"), nullable=False)
     phase_id: Mapped[int | None] = mapped_column("PhaseId", ForeignKey("phase.Id", ondelete="SET NULL"))
     module_id: Mapped[int | None] = mapped_column("ModuleId", ForeignKey("ticket_module.Id", ondelete="SET NULL"))
+    process_id: Mapped[int | None] = mapped_column("ProcessId", ForeignKey("process.Id", ondelete="SET NULL"))
+    process_step_id: Mapped[int | None] = mapped_column("ProcessStepId", ForeignKey("process_step.Id", ondelete="SET NULL"))
     title: Mapped[str] = mapped_column("Title", String(200), nullable=False)
     description: Mapped[str | None] = mapped_column("Description", Text)
     priority: Mapped[str] = mapped_column("Priority", String(10), nullable=False, default="Medium")
@@ -269,6 +305,8 @@ class Ticket(Base):
     project: Mapped[Project] = relationship()
     phase: Mapped[Phase | None] = relationship()
     module: Mapped[TicketModule | None] = relationship()
+    process: Mapped["Process | None"] = relationship(foreign_keys=[process_id])
+    process_step: Mapped["ProcessStep | None"] = relationship(foreign_keys=[process_step_id])
     assignee: Mapped[Person | None] = relationship()
     responses: Mapped[list["TicketResponse"]] = relationship(
         back_populates="ticket", cascade="all, delete-orphan", order_by="TicketResponse.id")
@@ -313,3 +351,112 @@ class TicketAttachment(Base):
 
     ticket: Mapped[Ticket] = relationship(back_populates="attachments")
     response: Mapped[TicketResponse | None] = relationship(back_populates="attachments")
+
+
+# ============================================================ v1.3
+# Microsoft Entra ID (Azure AD) sign-in and directory import,
+# plus the process / process step hierarchy beneath a module.
+
+class AppUser(Base):
+    """An account that can sign in.
+
+    Kept apart from Person on purpose. Person is a name on a plan and may
+    belong to someone who never logs in — a customer contact, a sub-contractor,
+    somebody who left. AppUser is the credential. Folding the two together
+    would mean deleting a leaver's login also deletes the assignments that
+    record what they did.
+    """
+    __tablename__ = "app_user"
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    person_id: Mapped[int | None] = mapped_column(
+        "PersonId", ForeignKey("person.Id", ondelete="SET NULL"))
+    email: Mapped[str] = mapped_column("Email", String(200), nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column("DisplayName", String(200), nullable=False)
+    # "local" or "entra". A local account has a password; an Entra one never does.
+    source: Mapped[str] = mapped_column("Source", String(10), nullable=False, default="local")
+    # The Entra object id. Immutable for the life of the account, unlike mail
+    # or userPrincipalName, which change when somebody's surname changes.
+    entra_oid: Mapped[str | None] = mapped_column("EntraOid", String(64), unique=True)
+    tenant_id: Mapped[str | None] = mapped_column("EntraTenantId", String(64))
+    # Member = Aequm India staff. Guest = a customer invited into the tenant.
+    user_type: Mapped[str] = mapped_column("UserType", String(10), nullable=False, default="Member")
+    # Which customer this account belongs to. Meaningful on Guests only: a
+    # member of Aequm India is not "from" a customer, and leaving it empty on a
+    # guest is what keeps an unassigned customer user from seeing anything.
+    customer_id: Mapped[int | None] = mapped_column("CustomerId", ForeignKey("customer.Id", ondelete="SET NULL"))
+    password_hash: Mapped[str | None] = mapped_column("PasswordHash", String(255))
+    is_admin: Mapped[int] = mapped_column("IsAdmin", Integer, nullable=False, default=0)
+    active: Mapped[int] = mapped_column("Active", Integer, nullable=False, default=1)
+    last_login_utc: Mapped[datetime | None] = mapped_column("LastLoginUtc", DateTime)
+    created_at_utc: Mapped[datetime] = mapped_column("CreatedAtUtc", DateTime, nullable=False)
+
+    person: Mapped["Person | None"] = relationship()
+
+    @property
+    def is_customer(self) -> bool:
+        return self.user_type == "Guest"
+
+
+class DirectorySync(Base):
+    """One row per import run, so an import can be audited after the fact."""
+    __tablename__ = "directory_sync"
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    run_by: Mapped[str] = mapped_column("RunBy", String(120), nullable=False, default="")
+    run_at_utc: Mapped[datetime] = mapped_column("RunAtUtc", DateTime, nullable=False)
+    fetched: Mapped[int] = mapped_column("Fetched", Integer, nullable=False, default=0)
+    created: Mapped[int] = mapped_column("Created", Integer, nullable=False, default=0)
+    updated: Mapped[int] = mapped_column("Updated", Integer, nullable=False, default=0)
+    skipped: Mapped[int] = mapped_column("Skipped", Integer, nullable=False, default=0)
+    detail: Mapped[str | None] = mapped_column("Detail", Text)
+
+
+class Process(Base):
+    """A named process. Master data, not owned by one module.
+
+    A process such as period-end close is run by several modules. Hanging it
+    under a single module would force a copy per module, and copies drift.
+    """
+    __tablename__ = "process"
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column("Name", String(160), nullable=False, unique=True)
+    code: Mapped[str | None] = mapped_column("Code", String(40))
+    description: Mapped[str | None] = mapped_column("Description", String(1000))
+    active: Mapped[int] = mapped_column("Active", Integer, nullable=False, default=1)
+
+    steps: Mapped[list["ProcessStep"]] = relationship(
+        back_populates="process", cascade="all, delete-orphan",
+        order_by="ProcessStep.sort_order")
+
+
+class ProcessStep(Base):
+    """One ordered step within a process."""
+    __tablename__ = "process_step"
+    __table_args__ = (UniqueConstraint("ProcessId", "Name", name="uq_step_name"),
+                      Index("ix_step_process", "ProcessId"))
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    process_id: Mapped[int] = mapped_column(
+        "ProcessId", ForeignKey("process.Id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column("Name", String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column("Description", String(1000))
+    sort_order: Mapped[int] = mapped_column("SortOrder", Integer, nullable=False, default=0)
+    owner_role_id: Mapped[int | None] = mapped_column(
+        "OwnerRoleId", ForeignKey("role.Id", ondelete="SET NULL"))
+    active: Mapped[int] = mapped_column("Active", Integer, nullable=False, default=1)
+
+    process: Mapped[Process] = relationship(back_populates="steps")
+    owner_role: Mapped["Role | None"] = relationship()
+
+
+class ModuleProcess(Base):
+    """Assigns a process to a module. Many to many, deliberately."""
+    __tablename__ = "module_process"
+    __table_args__ = (UniqueConstraint("ModuleId", "ProcessId", name="uq_module_process"),)
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    module_id: Mapped[int] = mapped_column(
+        "ModuleId", ForeignKey("ticket_module.Id", ondelete="CASCADE"), nullable=False)
+    process_id: Mapped[int] = mapped_column(
+        "ProcessId", ForeignKey("process.Id", ondelete="CASCADE"), nullable=False)
+    sort_order: Mapped[int] = mapped_column("SortOrder", Integer, nullable=False, default=0)
+
+    module: Mapped["TicketModule"] = relationship()
+    process: Mapped[Process] = relationship()

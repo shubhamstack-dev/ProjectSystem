@@ -66,9 +66,11 @@ function FilePicker({ files, setFiles }) {
 function CreateDialog({ projects, modules, people, defaultProjectId, onClose, onSaved, onError }) {
   const [f, setF] = useState({
     projectId: defaultProjectId || '', phaseId: '', moduleId: '',
+    processId: '', processStepId: '',
     title: '', description: '', priority: 'Medium', assigneeId: '',
   })
   const [phases, setPhases] = useState([])
+  const [procs, setProcs] = useState([])
   const [files, setFiles] = useState([])
   const [busy, setBusy] = useState(false)
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
@@ -78,11 +80,21 @@ function CreateDialog({ projects, modules, people, defaultProjectId, onClose, on
     else setPhases([])
   }, [f.projectId])
 
+  // Only the processes this module actually runs. Offering the rest would let
+  // somebody raise a ticket against a step the module has nothing to do with,
+  // which the API refuses anyway — better not to offer it at all.
+  useEffect(() => {
+    setF((prev) => ({ ...prev, processId: '', processStepId: '' }))
+    if (f.moduleId) api.processes(f.moduleId).then(setProcs).catch(() => setProcs([]))
+    else setProcs([])
+  }, [f.moduleId])
+
   async function save() {
     setBusy(true)
     try {
       const t = await api.createTicket({
         project_id: f.projectId, phase_id: f.phaseId, module_id: f.moduleId,
+        process_id: f.processId, process_step_id: f.processStepId,
         title: f.title, description: f.description, priority: f.priority,
         assignee_id: f.assigneeId,
       }, files)
@@ -125,6 +137,28 @@ function CreateDialog({ projects, modules, people, defaultProjectId, onClose, on
             <optgroup label="Outside SAP">
               {activeModules.filter((m) => m.moduleType === 'NonSAP').map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </optgroup>
+          </select>
+        </div>
+        <div className="fld">
+          <label>Process</label>
+          <select value={f.processId}
+                  onChange={(e) => setF({ ...f, processId: e.target.value, processStepId: '' })}
+                  disabled={!f.moduleId || !procs.length}>
+            <option value="">— none —</option>
+            {procs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          {f.moduleId && !procs.length && (
+            <div className="hint">No process is assigned to this module yet.</div>
+          )}
+          {!f.moduleId && <div className="hint">Choose a module first.</div>}
+        </div>
+        <div className="fld">
+          <label>Process step</label>
+          <select value={f.processStepId} onChange={set('processStepId')}
+                  disabled={!f.processId}>
+            <option value="">— none —</option>
+            {(procs.find((p) => String(p.id) === String(f.processId))?.steps || [])
+              .map((st) => <option key={st.id} value={st.id}>{st.sort_order}. {st.name}</option>)}
           </select>
         </div>
         <div className="fld">
@@ -193,6 +227,11 @@ function TicketDetail({ id, people, modules, onClose, onChanged, onError }) {
         <span className={`pill ${STATUS_CLASS[t.status]}`}>{STATUS_LABEL[t.status]}</span>
         {t.moduleName && <span className="pill plain">{t.moduleName} · {t.moduleType === 'SAP' ? 'within SAP' : 'outside SAP'}</span>}
         {t.phaseName && <span className="pill plain">Phase: {t.phaseName}</span>}
+        {t.processName && (
+          <span className="pill proc">
+            {t.processName}{t.processStepName ? ` · ${t.processStepName}` : ''}
+          </span>
+        )}
         <span className="muted" style={{ marginLeft: 'auto', fontSize: 12 }}>
           {t.projectCode} · raised by {t.createdBy} · {when(t.createdAtUtc)}
         </span>
@@ -321,7 +360,7 @@ export default function Tickets() {
       <div className="panel">
       <table className="grid">
         <thead>
-          <tr><th>No.</th><th>Title</th><th>Project</th><th>Phase</th><th>Module</th>
+          <tr><th>No.</th><th>Title</th><th>Project</th><th>Phase</th><th>Process</th><th>Module</th>
               <th>Priority</th><th>Status</th><th>Allocated to</th><th>Replies</th><th>Updated</th><th /></tr>
         </thead>
         <tbody>
@@ -332,6 +371,10 @@ export default function Tickets() {
               <td>{t.title}</td>
               <td>{t.projectCode}</td>
               <td>{t.phaseName || '—'}</td>
+              <td>{t.processName
+                ? <>{t.processName}{t.processStepName &&
+                    <div className="muted">{t.processStepName}</div>}</>
+                : '—'}</td>
               <td>{t.moduleName ? <>{t.moduleName} <span className="muted">({t.moduleType === 'SAP' ? 'SAP' : 'non-SAP'})</span></> : '—'}</td>
               <td><span className={`pill ${PRIO_CLASS[t.priority]}`}>{t.priority}</span></td>
               <td><span className={`pill ${STATUS_CLASS[t.status]}`}>{STATUS_LABEL[t.status]}</span></td>

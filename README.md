@@ -1,4 +1,169 @@
 
+## v1.4 — the customer master
+
+### A customer is a code and a name
+
+Nothing else belongs on the row. Which projects are theirs, which roles their
+people hold and which accounts belong to them are all **assignments** that
+change on their own schedule, not fields copied onto a master record.
+
+**The code is generated, never typed.** A code somebody types is a code somebody
+mistypes, and two rows for one customer cannot be untangled once projects point
+at both.
+
+The counter behind it is persisted and only ever goes up. It is not derived from
+the highest code in use, and it is not the row id: SQLite reuses the highest
+rowid after a delete, so either of those hands `CUST-0003` to a second customer
+the moment the first one is removed — by which time it is printed on somebody's
+correspondence. A test pins this.
+
+### Three assignments
+
+**Projects.** A project belongs to one customer, so assigning it takes it off
+whoever had it before. That is said in the reply rather than done quietly.
+
+**Customer roles.** Only roles already marked as customer roles can be given to
+a customer. A team role handed over would give their people the team's screens,
+so it is refused with that reason.
+
+**Their people.** Guest accounts from the directory. An Aequm India account is
+refused: a member already sees every project, and filing them under a customer
+would say something untrue about who they work for without changing anything
+they can reach.
+
+### What a customer user sees
+
+Their own customer, their own projects, their own tickets. They can raise
+tickets, follow the status, read the team's replies and reply back.
+
+Three boundaries worth knowing:
+
+* **An account with no customer yet sees nothing at all**, not everything. That
+  is the safe way round, and both the API and the sidebar say so plainly rather
+  than leaving somebody staring at an empty screen wondering if it is broken.
+  The Customers page lists unfiled guests for exactly this reason.
+* **Another customer's ticket is 404, not 403.** A 403 confirms the ticket
+  exists, which is itself the leak.
+* **The project list is scoped as well as the ticket list.** The ticket API
+  refuses a foreign project anyway, but offering it in the dropdown produces a
+  form that fails on save, and that reads as a broken product rather than a
+  boundary.
+
+### Everything else is unchanged
+
+Sign-in, the directory import, processes and process steps all work as they did
+in v1.3. Only the customer assignment is new.
+
+### Tests
+
+    cd backend && pytest -q        # 68 tests
+
+All three suites now share one harness. They each used to build their own engine
+and override `get_db` on the single FastAPI app, so whichever module imported
+last won and the others silently ran against a database with none of their rows
+in it.
+
+
+## v1.3 — Microsoft Entra ID sign-in, and processes beneath a module
+
+### The product had no authentication before this
+
+`X-Acting-As` was a name typed into a box in the sidebar. It is an audit label,
+not a login: anyone could call any endpoint and claim to be anyone. That is fine
+for a plan nobody outside the room can reach, and not fine once customers raise
+tickets on it. So sign-in had to be built, not extended.
+
+The typed-in box is gone. Whoever is signed in is who the audit trail records.
+
+### Two ways in
+
+**Microsoft Entra ID** (what used to be Azure AD), for Aequm India and for
+customers invited into the tenant. The browser authenticates against Microsoft
+directly using the authorisation code flow with PKCE; this API never sees a
+password.
+
+**Local accounts**, so the product still starts and still has an administrator
+on a machine with no Azure application registered. Without that fallback, a
+misconfigured tenant locks the owner out of their own system. On first run, if
+there is no account at all, one administrator is created and its password
+printed to the API log once — never written to a file.
+
+The sign-in screen only offers the Microsoft button when a tenant is actually
+configured, and says why when it is not.
+
+### Importing users from the directory
+
+*Directory* (administrators only) reads the tenant through Microsoft Graph and
+creates the people here. Fetch and import are two separate buttons: reading
+changes nothing, so you can see who is there, and who is already in the system,
+before creating a single account.
+
+**Matching is on the Entra object id, never on the address.** People marry,
+change surname and keep the same account. Matching on mail would import them a
+second time and orphan every ticket assigned to the first row. A test pins this.
+
+**Members and guests land on different sides.** Graph reports `userType`. Aequm
+India staff are Members; a customer invited into the tenant as B2B is a Guest.
+That one field decides which organisation and role the imported person is filed
+under, so both sides are created the same way and still end up on the right side
+of the wall. The four `ENTRA_*_ORG` / `ENTRA_*_ROLE` settings control where.
+
+**A guest cannot let themselves in.** Members may sign in and be provisioned on
+the spot; guests must be imported by an administrator first. A customer who can
+create their own account is a customer who can reach another customer's tickets.
+`ENTRA_AUTO_PROVISION_GUESTS` exists if you disagree, and defaults to off.
+
+Every import writes a row to `directory_sync` — who ran it, when, and the counts
+— shown at the bottom of the Directory page.
+
+### App registration
+
+    Redirect URI (SPA)   http://localhost:5173/auth/callback
+    API permission       User.Read.All (Application) + admin consent
+
+Sign-in needs only the tenant id and client id. It is the *directory read* that
+needs the client secret and the consent; the Directory page says so plainly when
+they are missing.
+
+### Processes and process steps
+
+A **process** is master data with **ordered steps**, and `module_process`
+assigns it to modules many-to-many.
+
+Many-to-many on purpose: period-end close is one process that finance,
+controlling and treasury all run. Nesting it under a single module would force a
+copy per module, and the copies drift apart the first time somebody edits one.
+
+Tickets gained `ProcessId` and `ProcessStepId`, so work is located inside the
+process rather than only against the module. The chain is validated: **the step
+must belong to the process, and the process must be assigned to the ticket's
+module.** Otherwise a ticket can claim a step the module never runs, and every
+report grouped by module and process stops reconciling to the ticket list.
+
+Two refusals worth knowing:
+
+* A process named on a ticket cannot be deleted, and cannot be taken off that
+  module. Mark it inactive instead, so the ticket keeps saying what it was
+  raised against.
+* Moving a ticket to a module that does not run its process **clears the
+  process and says so**; *naming* such a process is **refused**. A move is a
+  decision, a mismatched name is a mistake, and the two deserve different
+  answers.
+
+### Migration
+
+Nothing by hand. On startup the backend creates the new tables and adds the two
+ticket columns to an existing database; `schema.sql` carries the same DDL for
+fresh installs.
+
+### Tests
+
+    cd backend && pytest -q        # 43 tests
+
+Graph and the Microsoft token endpoint are stubbed — the point is the behaviour
+on this side of the wire, not whether Microsoft answers.
+
+
 
 ## v1.1 — Customer roles, line-item date approvals, and phases
 

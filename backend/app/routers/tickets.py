@@ -18,7 +18,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
-from ..models import (TICKET_PRIORITIES, TICKET_STATUSES, Person, Phase, Project,
+from ..services.auth import Caller, current_user
+from ..models import (ModuleProcess, Process, ProcessStep, TICKET_PRIORITIES, TICKET_STATUSES, Person, Phase, Project,
                       Ticket, TicketAttachment, TicketModule, TicketResponse)
 from ..schemas import (TicketAttachmentOut, TicketModuleIn, TicketModuleOut,
                        TicketOut, TicketResponseOut, TicketUpdateIn)
@@ -53,6 +54,9 @@ def _ticket_out(t: Ticket, full: bool = False) -> TicketOut:
         phase_id=t.phase_id, phase_name=t.phase.name if t.phase else None,
         module_id=t.module_id, module_name=t.module.name if t.module else None,
         module_type=t.module.module_type if t.module else None,
+        process_id=t.process_id, process_name=t.process.name if t.process else None,
+        process_step_id=t.process_step_id,
+        process_step_name=t.process_step.name if t.process_step else None,
         title=t.title, description=t.description, priority=t.priority, status=t.status,
         assignee_id=t.assignee_id, assignee_name=t.assignee.name if t.assignee else None,
         created_by=t.created_by, created_at_utc=t.created_at_utc, updated_at_utc=t.updated_at_utc,
@@ -179,7 +183,11 @@ def delete_module(module_id: int, db: Session = Depends(get_db), actor: str = De
 @router.get("", response_model=list[TicketOut])
 def tickets(project_id: int | None = None, phase_id: int | None = None,
             status: str | None = None, priority: str | None = None,
-            assignee_id: int | None = None, db: Session = Depends(get_db)):
+            assignee_id: int | None = None, db: Session = Depends(get_db),
+            caller: Caller = Depends(current_user)):
+    allowed = _customer_projects(caller)
+    if allowed is not None and not allowed:
+        return []                      # a customer user with no customer yet
     q = (select(Ticket)
          .options(selectinload(Ticket.project), selectinload(Ticket.phase),
                   selectinload(Ticket.module), selectinload(Ticket.assignee),
@@ -195,20 +203,83 @@ def tickets(project_id: int | None = None, phase_id: int | None = None,
         q = q.where(Ticket.priority == priority)
     if assignee_id:
         q = q.where(Ticket.assignee_id == assignee_id)
+    if allowed is not None:
+        q = q.where(Ticket.project_id.in_(allowed))
     return [_ticket_out(t) for t in db.execute(q).scalars().all()]
+
+
+def _customer_projects(caller: Caller) -> set[int] | None:
+    """Which projects this caller may see, or None for no restriction.
+
+    A member of Aequm India sees everything. A customer user sees the projects
+    of their own customer and nothing else — and a customer user who has not
+    been given a customer yet sees nothing at all, which is the safe way round:
+    an account nobody has filed should not default to seeing every project.
+    """
+    if not caller.is_customer:
+        return None
+    if not caller.user.customer_id:
+        return set()
+    rows = caller.db.execute(select(Project.id).where(
+        Project.customer_id == caller.user.customer_id)).all()
+    return {r[0] for r in rows}
+
+
+def _may_touch(caller: Caller, project_id: int) -> bool:
+    allowed = _customer_projects(caller)
+    return allowed is None or project_id in allowed
+
+
+def _check_process(db: Session, module_id: int | None,
+                   process_id: int | None, step_id: int | None) -> None:
+    """A ticket may name a process and a step, and the chain has to hold.
+
+    The step must belong to the process, and the process must be assigned to
+    the ticket's module. Without the second check a ticket can claim a step
+    that the module never runs, and every report grouped by module and process
+    stops reconciling to the ticket list.
+    """
+    if step_id and not process_id:
+        raise RuleViolation("A process step needs the process it belongs to.")
+    if process_id:
+        p = db.get(Process, process_id)
+        if p is None:
+            raise NotFound(f"Process {process_id} not found.")
+        if not module_id:
+            raise RuleViolation(
+                "A process belongs to a module, so choose the module first.")
+        link = db.execute(select(ModuleProcess).where(
+            ModuleProcess.process_id == process_id,
+            ModuleProcess.module_id == module_id)).scalar_one_or_none()
+        if link is None:
+            m = db.get(TicketModule, module_id)
+            raise RuleViolation(
+                f"{p.name} is not one of the processes assigned to "
+                f"{m.name if m else 'that module'}.")
+    if step_id:
+        st = db.get(ProcessStep, step_id)
+        if st is None:
+            raise NotFound(f"Process step {step_id} not found.")
+        if st.process_id != process_id:
+            raise RuleViolation("That step belongs to a different process.")
 
 
 @router.post("", response_model=TicketOut, status_code=201)
 async def create_ticket(project_id: int = Form(...), title: str = Form(...),
                         description: str = Form(""), priority: str = Form("Medium"),
                         phase_id: int | None = Form(None), module_id: int | None = Form(None),
+                        process_id: int | None = Form(None),
+                        process_step_id: int | None = Form(None),
                         assignee_id: int | None = Form(None),
                         files: list[UploadFile] = File(default=[]),
-                        db: Session = Depends(get_db), actor: str = Depends(who)):
+                        db: Session = Depends(get_db), actor: str = Depends(who),
+                        caller: Caller = Depends(current_user)):
     """Create a ticket - multipart, so documents can be attached in the same call."""
     project = db.get(Project, project_id)
     if project is None:
         raise NotFound(f"Project {project_id} not found.")
+    if not _may_touch(caller, project_id):
+        raise RuleViolation("That project does not belong to your organisation.")
     if not title.strip():
         raise RuleViolation("The ticket needs a title.")
     _check_priority(priority)
@@ -218,11 +289,13 @@ async def create_ticket(project_id: int = Form(...), title: str = Form(...),
             raise RuleViolation("The chosen phase does not belong to this project.")
     if module_id and db.get(TicketModule, module_id) is None:
         raise NotFound(f"Module {module_id} not found.")
+    _check_process(db, module_id or None, process_id or None, process_step_id or None)
     if assignee_id and db.get(Person, assignee_id) is None:
         raise NotFound(f"Person {assignee_id} not found.")
 
     now = datetime.utcnow()
     t = Ticket(project_id=project_id, phase_id=phase_id or None, module_id=module_id or None,
+               process_id=process_id or None, process_step_id=process_step_id or None,
                title=title.strip(), description=description.strip() or None,
                priority=priority, status="Open", assignee_id=assignee_id or None,
                created_by=actor, created_at_utc=now, updated_at_utc=now)
@@ -235,19 +308,39 @@ async def create_ticket(project_id: int = Form(...), title: str = Form(...),
 
 
 @router.get("/{ticket_id}", response_model=TicketOut)
-def ticket(ticket_id: int, db: Session = Depends(get_db)):
+def ticket(ticket_id: int, db: Session = Depends(get_db),
+           caller: Caller = Depends(current_user)):
     """Full detail: thread of responses and every attachment. The front end
     polls this, so replies from the other side appear automatically."""
-    return _ticket_out(_load_ticket(db, ticket_id), full=True)
+    t = _load_ticket(db, ticket_id)
+    if not _may_touch(caller, t.project_id):
+        raise NotFound(f"Ticket {ticket_id} not found.")
+    return _ticket_out(t, full=True)
 
 
 @router.put("/{ticket_id}", response_model=TicketOut)
 def update_ticket(ticket_id: int, req: TicketUpdateIn, db: Session = Depends(get_db),
-                  actor: str = Depends(who)):
+                  actor: str = Depends(who),
+                  caller: Caller = Depends(current_user)):
     """Change title/description, re-prioritise, move status, re-allocate, or
     re-point at another module or phase."""
     t = _load_ticket(db, ticket_id)
+    if not _may_touch(caller, t.project_id):
+        raise NotFound(f"Ticket {ticket_id} not found.")
     changes = []
+    # Whatever the request changes, the resulting combination has to hold —
+    # moving a ticket to another module can strand a process it already names.
+    # Only the combination the caller actually asked for is validated. Naming a
+    # process that the chosen module does not run is a mistake and is refused.
+    # Moving the module alone is not a mistake — it is a decision — so the
+    # process that no longer applies is cleared below and said so in the reply,
+    # rather than the whole move being blocked.
+    if req.process_id is not None or req.process_step_id is not None:
+        _check_process(db,
+                       (req.module_id if req.module_id is not None else t.module_id) or None,
+                       (req.process_id if req.process_id is not None else t.process_id) or None,
+                       (req.process_step_id if req.process_step_id is not None
+                        else t.process_step_id) or None)
     if req.title is not None and req.title.strip() and req.title.strip() != t.title:
         changes.append(audit.change("title", t.title, req.title.strip()))
         t.title = req.title.strip()
@@ -281,6 +374,26 @@ def update_ticket(ticket_id: int, req: TicketUpdateIn, db: Session = Depends(get
                 raise RuleViolation("The chosen phase does not belong to this project.")
         t.phase_id = req.phase_id or None
         changes.append("phase changed")
+    if req.process_id is not None and req.process_id != t.process_id:
+        t.process_id = req.process_id or None
+        changes.append("process changed")
+    if req.process_step_id is not None and req.process_step_id != t.process_step_id:
+        t.process_step_id = req.process_step_id or None
+        changes.append("process step changed")
+    # Moving to another module can leave a process behind that the new module
+    # does not run. Clear it rather than leave the ticket pointing at nothing.
+    if t.process_id and t.module_id:
+        still = db.execute(select(ModuleProcess).where(
+            ModuleProcess.process_id == t.process_id,
+            ModuleProcess.module_id == t.module_id)).scalar_one_or_none()
+        if still is None:
+            t.process_id = None
+            t.process_step_id = None
+            changes.append("process cleared, the new module does not run it")
+    elif t.process_id and not t.module_id:
+        t.process_id = None
+        t.process_step_id = None
+        changes.append("process cleared with the module")
     detail = "; ".join(c for c in changes if c)
     if detail:
         t.updated_at_utc = datetime.utcnow()
@@ -299,7 +412,8 @@ def delete_ticket(ticket_id: int, db: Session = Depends(get_db), actor: str = De
 
 
 @router.post("/{ticket_id}/responses", response_model=TicketOut, status_code=201)
-async def respond(ticket_id: int, body: str = Form(...),
+async def respond(ticket_id: int, caller: Caller = Depends(current_user),
+                  body: str = Form(...),
                   files: list[UploadFile] = File(default=[]),
                   db: Session = Depends(get_db), actor: str = Depends(who)):
     """Add a reply (documents welcome). The reply is on the ticket the moment
@@ -307,6 +421,8 @@ async def respond(ticket_id: int, body: str = Form(...),
     it up on their next poll. First reply on an Open ticket moves it to
     InProgress automatically."""
     t = _load_ticket(db, ticket_id)
+    if not _may_touch(caller, t.project_id):
+        raise NotFound(f"Ticket {ticket_id} not found.")
     if not body.strip():
         raise RuleViolation("The response needs some text.")
     if t.status == "Closed":

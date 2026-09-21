@@ -8,13 +8,23 @@ from ..schemas import ProjectDetail, ProjectIn, ProjectSummary
 from ..services import audit, mapper, plan
 from ..services.rules import NotFound, RuleViolation, project_has_actuals
 from .common import who
+from ..services.auth import Caller, current_user
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
 @router.get("", response_model=list[ProjectSummary])
-def list_projects(db: Session = Depends(get_db)):
-    ids = db.execute(select(Project.id).order_by(Project.code)).scalars().all()
+def list_projects(db: Session = Depends(get_db),
+                  caller: Caller = Depends(current_user)):
+    q = select(Project.id).order_by(Project.code)
+    # A customer user is offered only their own projects. The ticket API refuses
+    # the others anyway, but offering them produces a form that fails on save,
+    # which reads as a broken product rather than a boundary.
+    if caller.is_customer:
+        if not caller.user.customer_id:
+            return []
+        q = q.where(Project.customer_id == caller.user.customer_id)
+    ids = db.execute(q).scalars().all()
     out = []
     for pid in ids:
         p = plan.load(db, pid)
@@ -25,8 +35,11 @@ def list_projects(db: Session = Depends(get_db)):
 
 
 @router.get("/{project_id}", response_model=ProjectDetail)
-def get_project(project_id: int, db: Session = Depends(get_db)):
+def get_project(project_id: int, db: Session = Depends(get_db),
+                caller: Caller = Depends(current_user)):
     p = plan.load_required(db, project_id)
+    if caller.is_customer and p.customer_id != caller.user.customer_id:
+        raise NotFound(f"Project {project_id} not found.")
     acts, result = plan.schedule(p)
     return ProjectDetail(
         project=mapper.to_summary(p, acts, result),
