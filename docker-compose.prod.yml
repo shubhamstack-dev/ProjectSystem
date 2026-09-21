@@ -1,6 +1,3 @@
-# PRODUCTION compose - use on the VPS.
-#   docker compose -f docker-compose.prod.yml up -d --build
-# Needs a .env file next to it with MYSQL_PASSWORD and DOMAIN (see .env.prod.example).
 services:
   mysql:
     image: mysql:8.0
@@ -9,16 +6,15 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_DATABASE: projectsystem
-    # NO "ports:" here on purpose - the database is reachable only from the other containers, never from the internet.
     volumes:
       - mysql_data:/var/lib/mysql
       - ./backend/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    command: --max_allowed_packet=64M
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_PASSWORD}"]
       interval: 5s
       timeout: 5s
       retries: 20
-
   backend:
     build: ./backend
     container_name: ps-backend
@@ -28,9 +24,21 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: "mysql+pymysql://root:${MYSQL_PASSWORD_URLENC}@mysql:3306/projectsystem"
-      CORS_ORIGINS: "https://${DOMAIN},https://www.${DOMAIN}"
-    # no "ports:" - only the web container talks to it
-
+      CORS_ORIGINS: "http://${PUBLIC_HOST},https://${PUBLIC_HOST},https://www.${PUBLIC_HOST}"
+      SECRET_KEY: ${SECRET_KEY}
+      TOKEN_HOURS: ${TOKEN_HOURS:-12}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
+      ENTRA_REDIRECT_URI: ${ENTRA_REDIRECT_URI:-}
+      ENTRA_MEMBER_ORG: ${ENTRA_MEMBER_ORG:-Aequm India}
+      ENTRA_MEMBER_ROLE: ${ENTRA_MEMBER_ROLE:-Team Member}
+      ENTRA_GUEST_ORG: ${ENTRA_GUEST_ORG:-Customer}
+      ENTRA_GUEST_ROLE: ${ENTRA_GUEST_ROLE:-Customer Contact}
+      ENTRA_AUTO_PROVISION_MEMBERS: ${ENTRA_AUTO_PROVISION_MEMBERS:-1}
+      ENTRA_AUTO_PROVISION_GUESTS: ${ENTRA_AUTO_PROVISION_GUESTS:-0}
   web:
     build:
       context: ./frontend
@@ -40,14 +48,13 @@ services:
     depends_on:
       - backend
     environment:
-      DOMAIN: ${DOMAIN}
+      SITE_ADDRESS: ${SITE_ADDRESS}
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - caddy_data:/data        # HTTPS certificates live here - keep this volume
+      - caddy_data:/data
       - caddy_config:/config
-
 volumes:
   mysql_data:
   caddy_data:
