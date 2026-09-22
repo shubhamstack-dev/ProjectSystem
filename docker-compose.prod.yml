@@ -55,7 +55,7 @@ services:
     depends_on:
       - backend
     environment:
-      SITE_ADDRESS: ${SITE_ADDRESS}
+      DOMAIN: ${PUBLIC_HOST}
     ports:
       - "80:80"
       - "443:443"
