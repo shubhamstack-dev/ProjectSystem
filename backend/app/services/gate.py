@@ -50,6 +50,8 @@ CUSTOMER = [
     ("POST", r"/api/tickets"),
     ("GET", r"/api/tickets/\d+"),
     ("POST", r"/api/tickets/\d+/responses"),
+    ("POST", r"/api/tickets/\d+/close"),
+    ("POST", r"/api/tickets/\d+/reopen"),
     ("GET", r"/api/tickets/modules"),
     ("GET", r"/api/tickets/attachments/\d+"),
     ("GET", r"/api/projects"),

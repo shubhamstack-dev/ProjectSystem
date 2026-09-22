@@ -160,6 +160,30 @@ async def save_upload(f: UploadFile) -> dict:
             "size_bytes": size, "storage_key": key, "sha256": digest.hexdigest()}
 
 
+def save_bytes(name: str, data: bytes) -> dict:
+    """Store an attachment that arrived as bytes — an email attachment — under
+    exactly the rules an upload gets: sniffed type, size limit, on disk."""
+    name = (name or "attachment").replace("\\", "/").split("/")[-1][:255] or "attachment"
+    if not data:
+        raise FileRefused(f'"{name}" is empty.')
+    sniffed = _sniff(data[:8192], name)
+    if sniffed is None:
+        raise FileRefused(f'"{name}" is not a type that can be attached. Allowed: {ALLOWED_HUMAN}.')
+    kind, mime = sniffed
+    cap = limit_for(kind)
+    if len(data) > cap:
+        raise FileRefused(f'"{name}" is larger than {cap // (1024 * 1024)} MB.')
+    now = datetime.now(timezone.utc)
+    key = f"{now:%Y/%m}/{uuid.uuid4().hex}"
+    path = os.path.join(config.ATTACHMENT_DIR, key)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".part", "wb") as out:
+        out.write(data)
+    os.replace(path + ".part", path)
+    return {"file_name": name, "content_type": mime, "kind": kind, "size_bytes": len(data),
+            "storage_key": key, "sha256": hashlib.sha256(data).hexdigest()}
+
+
 def path_for(storage_key: str) -> str:
     """Resolve a key to a path, refusing anything that climbs out of the store."""
     root = os.path.realpath(config.ATTACHMENT_DIR)

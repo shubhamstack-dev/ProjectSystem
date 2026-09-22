@@ -31,6 +31,45 @@ def _phase_out(p: Phase) -> PhaseOut:
                                  sorted(p.assignments, key=lambda x: (x.role.name, x.person.name))])
 
 
+def customer_of_person(db: Session, person: Person) -> int | None:
+    """Which customer a person is from: their account says so, or failing that
+    a customer role that belongs to one customer."""
+    from ..models import AppUser
+    u = db.execute(select(AppUser).where(AppUser.person_id == person.id)).scalars().first()
+    if u and u.customer_id:
+        return u.customer_id
+    if person.role and person.role.is_customer and person.role.customer_id:
+        return person.role.customer_id
+    return None
+
+
+def _check_side(db: Session, phase: Phase, role: Role, person: Person) -> None:
+    """A phase has two sides: Aequm's team and the customer's people.
+
+    A customer role can be filled only by someone from this project's own
+    customer — never by a colleague at Aequm, and never by another customer's
+    contact, who would then be named on a plan they have no business seeing.
+    A team role, likewise, is not given to a customer's person.
+    """
+    project = phase.project
+    if role.is_customer:
+        if not project.customer_id:
+            raise RuleViolation(
+                "This project has no customer yet. Assign it to a customer on the "
+                "Customers screen before naming the customer's people on its phases.")
+        if role.customer_id and role.customer_id != project.customer_id:
+            raise RuleViolation(f"'{role.name}' belongs to another customer.")
+        theirs = customer_of_person(db, person)
+        if theirs != project.customer_id:
+            raise RuleViolation(
+                f"{person.name} is not one of this project's customer contacts, so cannot "
+                f"hold the customer role '{role.name}'.")
+    else:
+        if customer_of_person(db, person) is not None:
+            raise RuleViolation(
+                f"{person.name} is a customer contact. Team roles are held by Aequm people.")
+
+
 def _load_phase(db: Session, phase_id: int) -> Phase:
     p = db.get(Phase, phase_id)
     if p is None:
@@ -124,6 +163,7 @@ def add_assignment(phase_id: int, req: PhaseAssignmentIn,
         raise NotFound(f"Role {req.role_id} not found.")
     if person is None:
         raise NotFound(f"Person {req.person_id} not found.")
+    _check_side(db, p, role, person)
     dup = db.execute(select(PhaseAssignment).where(
         PhaseAssignment.phase_id == phase_id, PhaseAssignment.role_id == req.role_id,
         PhaseAssignment.person_id == req.person_id)).first()

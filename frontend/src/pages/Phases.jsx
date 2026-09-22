@@ -38,8 +38,7 @@ export default function Phases() {
   return (
     <div className="page">
       <h2>Phases</h2>
-      <p className="lead">Split the project into phases and define its roles &amp; responsibilities table:
-        per phase, assign each role - with the responsibilities defined on it - to a team member.</p>
+      <p className="lead">Split the project into phases, and for each phase name who holds each role — Aequm's team on one side, the customer's own people on the other.</p>
       <Notice error={error} onClose={() => setError(null)} />
 
       <div className="fld" style={{ maxWidth: 420, marginBottom: 12 }}>
@@ -70,6 +69,7 @@ export default function Phases() {
                 <button className="sm" onClick={() => removePhase(p)}>Delete</button>
               </div>
               <AssignTable phase={p} roles={roles} people={people}
+                           project={projects.find((x) => String(x.id) === String(projectId))}
                 onChanged={load} onError={setError} />
             </section>
           ))}
@@ -82,12 +82,41 @@ export default function Phases() {
   )
 }
 
-function AssignTable({ phase, roles, people, onChanged, onError }) {
+function AssignTable({ phase, roles, people, project, onChanged, onError }) {
+  // Two sides to every phase: Aequm's team, and the customer's own people.
+  const teamRoles = roles.filter((r) => !r.isCustomer)
+  const custRoles = roles.filter((r) => r.isCustomer &&
+    (!r.customerId || r.customerId === project?.customerId))
+  const staff = people.filter((p) => !p.customerId)
+  const theirs = people.filter((p) => p.customerId && p.customerId === project?.customerId)
+  const roleOf = Object.fromEntries(roles.map((r) => [r.id, r]))
+  const team = phase.assignments.filter((a) => !roleOf[a.roleId]?.isCustomer)
+  const cust = phase.assignments.filter((a) => roleOf[a.roleId]?.isCustomer)
+
+  async function remove(a) {
+    if (!confirm(`Remove ${a.personName} as ${a.roleName} in "${phase.name}"?`)) return
+    try { await api.deletePhaseAssignment(a.id); onChanged() } catch (e) { onError(e) }
+  }
+  return (
+    <>
+      <Side title="Aequm team" rows={team} roles={teamRoles} people={staff}
+            phase={phase} onRemove={remove} onChanged={onChanged} onError={onError} />
+      <Side title={`Customer side${project?.customerName ? ` — ${project.customerName}` : ''}`}
+            rows={cust} roles={custRoles} people={theirs} customer
+            phase={phase} onRemove={remove} onChanged={onChanged} onError={onError}
+            blocked={!project?.customerId
+              ? 'This project has no customer yet. Assign it on the Customers screen to name their people here.'
+              : !custRoles.length ? 'No customer roles defined yet. Add them on Customer Roles.'
+              : !theirs.length ? "This customer has no people yet. Add them on the Customers screen."
+              : null} />
+    </>
+  )
+}
+
+function Side({ title, rows, roles, people, phase, customer, blocked, onRemove, onChanged, onError }) {
   const [roleId, setRoleId] = useState('')
   const [personId, setPersonId] = useState('')
   const [notes, setNotes] = useState('')
-  const teamRoles = roles.filter((r) => !r.isCustomer)
-
   async function add() {
     try {
       await api.addPhaseAssignment(phase.id, { roleId: +roleId, personId: +personId, notes: notes || null })
@@ -95,44 +124,48 @@ function AssignTable({ phase, roles, people, onChanged, onError }) {
       onChanged()
     } catch (e) { onError(e) }
   }
-  async function remove(a) {
-    if (!confirm(`Remove ${a.personName} as ${a.roleName} in "${phase.name}"?`)) return
-    try { await api.deletePhaseAssignment(a.id); onChanged() } catch (e) { onError(e) }
-  }
-
   return (
-    <table className="grid">
-      <thead><tr><th>Role</th><th>Responsibilities</th><th>Assigned to</th><th>Notes for this phase</th><th className="act" /></tr></thead>
-      <tbody>
-        {phase.assignments.length === 0 && <tr><td colSpan={5} className="muted">No roles assigned in this phase yet.</td></tr>}
-        {phase.assignments.map((a) => (
-          <tr key={a.id}>
-            <td style={{ fontWeight: 600 }}><span className="swatch" style={{ background: a.roleColour }} />{a.roleName}</td>
-            <td className="wrap muted">{a.responsibilities || '—'}</td>
-            <td>{a.personName}</td>
-            <td className="wrap muted">{a.notes || ''}</td>
-            <td className="act"><RowActions onDelete={() => remove(a)} /></td>
-          </tr>
-        ))}
-        <tr>
-          <td>
-            <select value={roleId} onChange={(e) => setRoleId(e.target.value)}>
-              <option value="">+ role…</option>
-              {teamRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
-          </td>
-          <td className="muted wrap">{teamRoles.find((r) => String(r.id) === roleId)?.responsibilities || ''}</td>
-          <td>
-            <select value={personId} onChange={(e) => setPersonId(e.target.value)}>
-              <option value="">person…</option>
-              {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </td>
-          <td><input placeholder="optional" value={notes} onChange={(e) => setNotes(e.target.value)} /></td>
-          <td className="act"><button className="sm pri" disabled={!roleId || !personId} onClick={add}>Assign</button></td>
-        </tr>
-      </tbody>
-    </table>
+    <div className={`side-block ${customer ? 'cust' : ''}`}>
+      <div className="side-title">{title}</div>
+      <table className="grid">
+        <thead><tr><th>Role</th><th>Responsibilities</th><th>Assigned to</th><th>Notes for this phase</th><th className="act" /></tr></thead>
+        <tbody>
+          {rows.length === 0 && <tr><td colSpan={5} className="muted">No one yet.</td></tr>}
+          {rows.map((a) => (
+            <tr key={a.id}>
+              <td style={{ fontWeight: 600 }}><span className="swatch" style={{ background: a.roleColour }} />{a.roleName}</td>
+              <td className="wrap muted">{a.responsibilities || '—'}</td>
+              <td>{a.personName}</td>
+              <td className="wrap muted">{a.notes || ''}</td>
+              <td className="act"><RowActions onDelete={() => onRemove(a)} /></td>
+            </tr>
+          ))}
+          {blocked ? (
+            <tr><td colSpan={5} className="muted">{blocked}</td></tr>
+          ) : (
+            <tr>
+              <td>
+                <select value={roleId} onChange={(e) => setRoleId(e.target.value)}>
+                  <option value="">+ {customer ? 'customer role' : 'role'}…</option>
+                  {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              </td>
+              <td className="muted wrap">{roles.find((r) => String(r.id) === roleId)?.responsibilities || ''}</td>
+              <td>
+                <select value={personId} onChange={(e) => setPersonId(e.target.value)}>
+                  <option value="">{customer ? 'their person…' : 'person…'}</option>
+                  {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </td>
+              <td><input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="optional" /></td>
+              <td className="act">
+                <button className="pri sm" disabled={!roleId || !personId} onClick={add}>Add</button>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   )
 }
 

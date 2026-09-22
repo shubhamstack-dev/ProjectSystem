@@ -152,8 +152,13 @@ export const api = {
   unassignedGuests: () => call('GET', '/api/customers/unassigned'),
 
   // ---- processes and their steps
-  processes: (moduleId) =>
-    call('GET', `/api/processes${moduleId ? `?module_id=${moduleId}` : ''}`),
+  processes: (moduleId, projectId) => {
+    const q = new URLSearchParams()
+    if (moduleId) q.set('module_id', moduleId)
+    if (projectId) q.set('project_id', projectId)
+    const qs = q.toString()
+    return call('GET', `/api/processes${qs ? `?${qs}` : ''}`)
+  },
   createProcess: (body) => call('POST', '/api/processes', body),
   updateProcess: (id, body) => call('PUT', `/api/processes/${id}`, body),
   deleteProcess: (id) => call('DELETE', `/api/processes/${id}`),
@@ -217,6 +222,18 @@ export const api = {
     callForm('POST', '/api/tickets', fields, files, onProgress),
   updateTicket: (id, t) => call('PUT', `/api/tickets/${id}`, t),
   deleteTicket: (id) => call('DELETE', `/api/tickets/${id}`),
+  routeTicket: (id, body) => call('POST', `/api/tickets/${id}/route`, body),
+  resolveTicket: (id, resolution) => call('POST', `/api/tickets/${id}/resolve`, { resolution }),
+  closeTicket: (id) => call('POST', `/api/tickets/${id}/close`),
+  reopenTicket: (id, reason) => call('POST', `/api/tickets/${id}/reopen`, { reason }),
+  mailSettings: () => call('GET', '/api/mail/settings'),
+  saveMailSettings: (body) => call('PUT', '/api/mail/settings', body),
+  mailTest: (to) => call('POST', '/api/mail/test', { to }),
+  mailTestImap: () => call('POST', '/api/mail/test-imap'),
+  mailPoll: () => call('POST', '/api/mail/poll'),
+  mailSendNow: () => call('POST', '/api/mail/send-now'),
+  mailOutbox: () => call('GET', '/api/mail/outbox'),
+  mailInbound: () => call('GET', '/api/mail/inbound'),
   respondTicket: (id, body, files, onProgress) =>
     callForm('POST', `/api/tickets/${id}/responses`, { body }, files, onProgress),
   attachmentUrl: (id) => `/api/tickets/attachments/${id}`,

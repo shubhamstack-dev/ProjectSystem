@@ -18,6 +18,14 @@ class RuleViolation(Exception):
         self.blockers = blockers or []
 
 
+class Forbidden(Exception):
+    """Signed in, allowed to see it, but not allowed to do this to it."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
 class NotFound(Exception):
     pass
 

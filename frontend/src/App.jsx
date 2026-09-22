@@ -16,6 +16,7 @@ import SignIn from './pages/SignIn.jsx'
 import Directory from './pages/Directory.jsx'
 import Processes from './pages/Processes.jsx'
 import Customers from './pages/Customers.jsx'
+import MailSettings from './pages/MailSettings.jsx'
 
 const I = {
   portfolio: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>,
@@ -68,8 +69,8 @@ export default function App() {
     <div className="shell">
       <aside className="side">
         <div className="brand">
-          <span className="logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><path d="M4 7h8M4 12h14M4 17h10"/></svg></span>
-          <span>ProjectSystem</span>
+          <img className="logo-img" src="/aequm-mark.png" alt="" width="30" height="30" />
+          <span className="brand-txt"><b>Aequm</b><small>ProjectSystem</small></span>
         </div>
         <nav>
           {user.is_customer ? (
@@ -94,6 +95,9 @@ export default function App() {
               )}
               {user.is_admin && (
                 <NavLink to="/directory">{I.team}<span>Directory</span></NavLink>
+              )}
+              {user.is_admin && (
+                <NavLink to="/email">{I.audit}<span>Email</span></NavLink>
               )}
               <NavLink to="/audit">{I.audit}<span>Audit trail</span></NavLink>
             </>
@@ -148,7 +152,9 @@ export default function App() {
             <Route path="/processes" element={<Processes />} />
             <Route path="/customers" element={
               user.is_admin ? <Customers /> : <Navigate to="/" />} />
-            <Route path="/directory" element={
+            <Route path="/email" element={
+            user.is_admin ? <MailSettings /> : <Navigate to="/" />} />
+          <Route path="/directory" element={
               user.is_admin ? <Directory /> : <Navigate to="/" />} />
             <Route path="/auth/callback" element={<Navigate to="/" />} />
             <Route path="/audit" element={<Audit />} />

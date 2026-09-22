@@ -36,11 +36,7 @@ export default function ChangePassword({ user, onDone, onSignOut }) {
     <div className="signin-wrap">
       <div className="signin-card">
         <div className="signin-head">
-          <span className="logo-sq" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4">
-              <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 018 0v3" />
-            </svg>
-          </span>
+          <img className="logo-sq-img" src="/aequm-mark.png" alt="Aequm" width="40" height="40" />
           <div>
             <h1>Choose your own password</h1>
             <p>{user.display_name}{user.customer ? ` · ${user.customer.name}` : ''}</p>

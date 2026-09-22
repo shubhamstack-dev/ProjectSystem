@@ -402,3 +402,74 @@ tr.muted td{opacity:.55}
 .cp-hint{color:#b45309;font-size:11.5px}
 .linkish{background:none;border:0;color:#6b7280;text-decoration:underline;cursor:pointer;
   font:inherit;padding:0}
+
+/* ========================================================= v1.6: brand ===== */
+.logo-img{width:30px;height:30px;border-radius:7px;display:block;flex:0 0 30px}
+.brand-txt{display:flex;flex-direction:column;line-height:1.1}
+.brand-txt b{font-size:15px;color:#fff;font-weight:700;letter-spacing:.01em}
+.brand-txt small{font-size:11px;color:#9ca3af;font-weight:500}
+.logo-sq-img{width:40px;height:40px;border-radius:9px;display:block;flex:0 0 40px}
+
+/* ================================================ v1.6: ticket workflow == */
+.flow{border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin:12px 0;background:#fafbfd}
+.flow-strip{display:flex;list-style:none;margin:0 0 10px;padding:0;gap:4px;counter-reset:st}
+.flow-strip li{flex:1;position:relative;padding:8px 10px 8px 30px;border-radius:8px;
+  background:#f1f2f6;color:#6b7280;font-size:12px;line-height:1.25;counter-increment:st}
+.flow-strip li::before{content:counter(st);position:absolute;left:9px;top:8px;width:15px;height:15px;
+  border-radius:50%;background:#d1d5db;color:#fff;font-size:10px;font-weight:700;text-align:center;line-height:15px}
+.flow-strip li b{display:block;font-weight:600;font-size:12px}
+.flow-strip li small{display:block;font-size:11px;opacity:.85;margin-top:1px}
+.flow-strip li.done{background:#ecfdf3;color:#166534}
+.flow-strip li.done::before{background:#16a34a;content:"✓"}
+.flow-strip li.now{background:#eef0fb;color:#2B3990;box-shadow:inset 0 0 0 1.5px #2B3990}
+.flow-strip li.now::before{background:#2B3990}
+.flow-note{font-size:12.5px;border-radius:8px;padding:8px 11px;margin-bottom:10px}
+.flow-note.warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
+.flow-resolution{border-left:3px solid #16a34a;background:#f0fdf4;padding:8px 12px;border-radius:0 8px 8px 0;margin-bottom:10px}
+.flow-resolution .lbl{font-size:11px;font-weight:700;color:#166534;letter-spacing:.04em;text-transform:uppercase}
+.flow-resolution p{margin:4px 0 0;white-space:pre-wrap}
+.flow-act{border-top:1px dashed #e5e7eb;padding-top:10px;margin-top:10px}
+.flow-act h4{margin:0 0 8px;font-size:13px}
+.flow-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}
+.flow-act label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:#6b7280}
+.flow-act select,.flow-act input,.flow-act textarea{padding:7px 9px;border:1px solid #d1d5db;
+  border-radius:7px;font:inherit;font-size:13.5px;color:#111827;background:#fff}
+.flow-act textarea{width:100%;margin-bottom:8px;resize:vertical}
+.flow-wide{margin-bottom:8px}
+.flow-reopen{display:flex;gap:8px;margin-top:8px}
+.flow-reopen input{flex:1}
+.with-cell{display:flex;flex-direction:column;gap:2px}
+.with-cell small{font-size:11.5px;color:#6b7280}
+.stage-pill{display:inline-block;font-size:11px;font-weight:600;border-radius:10px;padding:1px 8px;width:max-content}
+.st-pm{background:#fff4e5;color:#b45309}
+.st-team{background:#eef0fb;color:#2B3990}
+.st-resolved{background:#ecfdf3;color:#166534}
+.st-closed{background:#f3f4f6;color:#6b7280}
+.mine-toggle{display:flex;align-items:center;gap:6px;font-size:13px;border:1px solid #d1d5db;
+  border-radius:8px;padding:6px 10px;cursor:pointer;background:#fff}
+
+/* ============================================ v1.6: phases, two sides ===== */
+.side-block{margin-bottom:12px}
+.side-block .side-title{padding:10px 12px 0}
+.side-title{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:#2B3990;margin:4px 0 6px}
+.side-block.cust .side-title{color:#6d28d9}
+.side-block.cust table{background:#faf7ff}
+.proc-project{display:flex;align-items:center;gap:8px;margin-top:8px}
+.proc-project label{font-size:12px;color:#6b7280}
+.proc-project select{padding:6px 9px;border:1px solid #d1d5db;border-radius:7px;font:inherit}
+
+/* ================================================== v1.6: email settings == */
+.mail-presets{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 14px}
+.mail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px}
+.panel-lite{border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;background:#fff}
+.panel-lite h3{margin:0 0 12px;display:flex;align-items:center;gap:8px;font-size:15px}
+.mail-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mail-fields label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:#6b7280}
+.mail-fields label.wide{grid-column:1/-1}
+.mail-fields input,.mail-fields select{padding:7px 9px;border:1px solid #d1d5db;border-radius:7px;
+  font:inherit;font-size:13.5px;color:#111827}
+.mail-check{display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:10px}
+.mail-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.mail-actions input{flex:1;min-width:180px;padding:7px 9px;border:1px solid #d1d5db;border-radius:7px;font:inherit}
+.mail-save{display:flex;gap:12px;align-items:center;margin-top:16px;flex-wrap:wrap}

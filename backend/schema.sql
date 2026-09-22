@@ -320,3 +320,54 @@ ALTER TABLE ticket_attachment ADD COLUMN Kind VARCHAR(12) NOT NULL DEFAULT 'docu
 -- Set when an administrator issues a password; cleared when the holder
 -- chooses their own. Until then the account can only change its password.
 ALTER TABLE app_user ADD COLUMN MustChangePassword TINYINT NOT NULL DEFAULT 0;
+
+-- ============================================================ v1.6
+-- Triage: every ticket waits on the project manager, who routes it to a team.
+ALTER TABLE ticket ADD COLUMN RaisedByUserId INT NULL;
+ALTER TABLE ticket ADD COLUMN PmId INT NULL;
+ALTER TABLE ticket ADD COLUMN TeamRoleId INT NULL;
+ALTER TABLE ticket ADD COLUMN RoutedBy VARCHAR(120) NULL;
+ALTER TABLE ticket ADD COLUMN RoutedAtUtc DATETIME NULL;
+ALTER TABLE ticket ADD COLUMN Resolution TEXT NULL;
+ALTER TABLE ticket ADD COLUMN ResolvedBy VARCHAR(120) NULL;
+ALTER TABLE ticket ADD COLUMN ResolvedAtUtc DATETIME NULL;
+
+-- A process belongs to one project; its name is unique within that project.
+ALTER TABLE process ADD COLUMN ProjectId INT NULL;
+ALTER TABLE process DROP INDEX Name;
+ALTER TABLE process ADD UNIQUE KEY uq_process_project_name (ProjectId, Name);
+
+CREATE TABLE IF NOT EXISTS app_setting (
+  SettingKey VARCHAR(60) PRIMARY KEY,
+  SettingValue TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS email_outbox (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  ToAddress VARCHAR(200) NOT NULL,
+  Subject VARCHAR(300) NOT NULL,
+  BodyText TEXT NOT NULL,
+  BodyHtml TEXT NULL,
+  TicketId INT NULL,
+  Reason VARCHAR(40) NOT NULL DEFAULT '',
+  Status VARCHAR(12) NOT NULL DEFAULT 'queued',
+  Attempts INT NOT NULL DEFAULT 0,
+  LastError VARCHAR(500) NULL,
+  CreatedAtUtc DATETIME NOT NULL,
+  NextTryUtc DATETIME NULL,
+  SentAtUtc DATETIME NULL,
+  INDEX ix_outbox_due (Status, NextTryUtc),
+  CONSTRAINT fk_outbox_ticket FOREIGN KEY (TicketId) REFERENCES ticket(Id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS email_inbound (
+  Id INT AUTO_INCREMENT PRIMARY KEY,
+  MessageId VARCHAR(300) NOT NULL UNIQUE,
+  FromAddress VARCHAR(200) NOT NULL,
+  Subject VARCHAR(300) NOT NULL DEFAULT '',
+  TicketId INT NULL,
+  Outcome VARCHAR(12) NOT NULL,
+  Note VARCHAR(500) NULL,
+  ReceivedAtUtc DATETIME NOT NULL,
+  CONSTRAINT fk_inbound_ticket FOREIGN KEY (TicketId) REFERENCES ticket(Id) ON DELETE SET NULL
+);

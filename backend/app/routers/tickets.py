@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import Header, Request, APIRouter, Depends, File, Form, UploadFile
+from fastapi import Body, Header, Request, APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
@@ -20,11 +20,12 @@ from sqlalchemy.orm import Session, selectinload
 from ..database import get_db
 from ..services.auth import Caller, current_user
 from ..models import (ModuleProcess, Process, ProcessStep, TICKET_PRIORITIES, TICKET_STATUSES, Person, Phase, Project,
-                      Ticket, TicketAttachment, TicketModule, TicketResponse)
+                      Ticket, TicketAttachment, TicketModule, TicketResponse, Role)
 from ..schemas import (TicketAttachmentOut, TicketModuleIn, TicketModuleOut,
                        TicketOut, TicketResponseOut, TicketUpdateIn)
 from ..services import audit
-from ..services.rules import NotFound, RuleViolation
+from ..services import mail as MAIL
+from ..services.rules import NotFound, RuleViolation, Forbidden
 from .common import who
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
@@ -64,6 +65,11 @@ def _ticket_out(t: Ticket, full: bool = False) -> TicketOut:
         process_step_name=t.process_step.name if t.process_step else None,
         title=t.title, description=t.description, priority=t.priority, status=t.status,
         assignee_id=t.assignee_id, assignee_name=t.assignee.name if t.assignee else None,
+        stage=_stage(t), pm_id=t.pm_id, pm_name=t.pm.name if t.pm else None,
+        team_role_id=t.team_role_id, team_name=t.team_role.name if t.team_role else None,
+        routed_by=t.routed_by, routed_at_utc=t.routed_at_utc,
+        resolution=t.resolution, resolved_by=t.resolved_by, resolved_at_utc=t.resolved_at_utc,
+        raised_by_user_id=t.raised_by_user_id,
         created_by=t.created_by, created_at_utc=t.created_at_utc, updated_at_utc=t.updated_at_utc,
         response_count=len(t.responses),
         attachments=[_att_out(a) for a in sorted(t.attachments, key=lambda x: x.id)
@@ -71,6 +77,95 @@ def _ticket_out(t: Ticket, full: bool = False) -> TicketOut:
                     [_att_out(a) for a in sorted(t.attachments, key=lambda x: x.id)
                      if a.response_id is None],
         responses=[_resp_out(r) for r in t.responses] if full else [])
+
+
+# ---- v1.6: the triage workflow ------------------------------------------
+#
+#   raised ──> with the project manager ──route──> with a team ──resolve──> resolved
+#                                                      ^                        │
+#                                                      └──────── reopen ────────┤
+#                                                                             close
+#                                                                               v
+#                                                                            closed
+#
+# Who may do what is decided here, once, and the same answer drives both the
+# API and the buttons the screen shows — so a button is never offered that the
+# server would refuse.
+
+def _stage(t: Ticket) -> str:
+    if t.status == "Closed":
+        return "closed"
+    if t.status == "Resolved":
+        return "resolved"
+    return "team" if t.team_role_id else "pm"
+
+
+def _person_of(caller: Caller):
+    return caller.db.get(Person, caller.user.person_id) if caller.user.person_id else None
+
+
+def _is_pm(caller: Caller, t: Ticket) -> bool:
+    return bool(t.pm_id) and caller.user.person_id == t.pm_id
+
+
+def _in_team(caller: Caller, t: Ticket) -> bool:
+    if not t.team_role_id:
+        return False
+    if t.assignee_id and caller.user.person_id == t.assignee_id:
+        return True
+    p = _person_of(caller)
+    return bool(p and p.role_id == t.team_role_id)
+
+
+def _actions(caller: Caller, t: Ticket) -> list[str]:
+    st, admin = _stage(t), caller.is_admin
+    raiser = t.raised_by_user_id == caller.user.id
+    out = []
+    if caller.is_customer:
+        if st == "resolved" and raiser:
+            out += ["close", "reopen"]
+        return out
+    # routing: the ticket's project manager. An administrator may too, which is
+    # what keeps a project with no manager named from stranding its tickets.
+    if st in ("pm", "team") and (_is_pm(caller, t) or admin):
+        out.append("route")
+    if st == "team" and (_in_team(caller, t) or _is_pm(caller, t) or admin):
+        out.append("resolve")
+    if st == "resolved" and (raiser or _is_pm(caller, t) or admin):
+        out += ["close", "reopen"]
+    if st == "closed" and (_is_pm(caller, t) or admin):
+        out.append("reopen")
+    return out
+
+
+def _waiting_on(caller: Caller, t: Ticket) -> bool:
+    """Is the next move this person's? Narrower than being *able* to act: a
+    project manager may still re-route a ticket the team holds, but it is not
+    waiting on them.
+
+      with the project manager -> the PM (an administrator, if none is named)
+      with a team              -> the people in that team
+      resolved                 -> whoever raised it, to confirm or reopen
+    """
+    st = _stage(t)
+    if st == "pm":
+        return _is_pm(caller, t) or (caller.is_admin and not t.pm_id)
+    if st == "team":
+        return _in_team(caller, t)
+    if st == "resolved":
+        return t.raised_by_user_id == caller.user.id
+    return False
+
+
+def _detail(db: Session, t: Ticket, caller: Caller) -> TicketOut:
+    out = _ticket_out(t, full=True)
+    out.actions = _actions(caller, t)
+    return out
+
+
+def _require(caller: Caller, t: Ticket, action: str, why: str) -> None:
+    if action not in _actions(caller, t):
+        raise Forbidden(why)
 
 
 def _load_ticket(db: Session, ticket_id: int) -> Ticket:
@@ -198,7 +293,8 @@ def delete_module(module_id: int, db: Session = Depends(get_db), actor: str = De
 @router.get("", response_model=list[TicketOut])
 def tickets(project_id: int | None = None, phase_id: int | None = None,
             status: str | None = None, priority: str | None = None,
-            assignee_id: int | None = None, db: Session = Depends(get_db),
+            assignee_id: int | None = None, stage: str | None = None,
+            waiting_on_me: bool = False, db: Session = Depends(get_db),
             caller: Caller = Depends(current_user)):
     allowed = _customer_projects(caller)
     if allowed is not None and not allowed:
@@ -220,7 +316,12 @@ def tickets(project_id: int | None = None, phase_id: int | None = None,
         q = q.where(Ticket.assignee_id == assignee_id)
     if allowed is not None:
         q = q.where(Ticket.project_id.in_(allowed))
-    return [_ticket_out(t) for t in db.execute(q).scalars().all()]
+    rows = db.execute(q).scalars().all()
+    if stage:
+        rows = [t for t in rows if _stage(t) == stage]
+    if waiting_on_me:
+        rows = [t for t in rows if _waiting_on(caller, t)]
+    return [_ticket_out(t) for t in rows]
 
 
 def _customer_projects(caller: Caller) -> set[int] | None:
@@ -246,7 +347,8 @@ def _may_touch(caller: Caller, project_id: int) -> bool:
 
 
 def _check_process(db: Session, module_id: int | None,
-                   process_id: int | None, step_id: int | None) -> None:
+                   process_id: int | None, step_id: int | None,
+                   project_id: int | None = None) -> None:
     """A ticket may name a process and a step, and the chain has to hold.
 
     The step must belong to the process, and the process must be assigned to
@@ -260,6 +362,8 @@ def _check_process(db: Session, module_id: int | None,
         p = db.get(Process, process_id)
         if p is None:
             raise NotFound(f"Process {process_id} not found.")
+        if project_id and p.project_id and p.project_id != project_id:
+            raise RuleViolation(f"{p.name} is a process of another project.")
         if not module_id:
             raise RuleViolation(
                 "A process belongs to a module, so choose the module first.")
@@ -304,22 +408,30 @@ async def create_ticket(project_id: int = Form(...), title: str = Form(...),
             raise RuleViolation("The chosen phase does not belong to this project.")
     if module_id and db.get(TicketModule, module_id) is None:
         raise NotFound(f"Module {module_id} not found.")
-    _check_process(db, module_id or None, process_id or None, process_step_id or None)
-    if assignee_id and db.get(Person, assignee_id) is None:
-        raise NotFound(f"Person {assignee_id} not found.")
-
+    _check_process(db, module_id or None, process_id or None, process_step_id or None,
+                   project_id=project_id)
+    # v1.6: nobody allocates a ticket while raising it. Every ticket goes to the
+    # project's manager first, who sends it to the team that should own it. An
+    # assignee_id still sent by an older client is ignored, not honoured — the
+    # point of the step is that it cannot be skipped.
     now = datetime.utcnow()
     t = Ticket(project_id=project_id, phase_id=phase_id or None, module_id=module_id or None,
                process_id=process_id or None, process_step_id=process_step_id or None,
                title=title.strip(), description=description.strip() or None,
-               priority=priority, status="Open", assignee_id=assignee_id or None,
+               priority=priority, status="Open", assignee_id=None,
+               pm_id=project.owner_id, raised_by_user_id=caller.user.id,
                created_by=actor, created_at_utc=now, updated_at_utc=now)
     db.add(t)
     db.flush()
     await _store_files(db, t, files, actor)
-    audit.record(db, actor, "Created", "Ticket", f"{t.number} {t.title}", project=project)
+    audit.record(db, actor, "Created", "Ticket", f"{t.number} {t.title}", project=project,
+                 detail=f"waiting on {project.owner.name if project.owner else 'a project manager'}")
     db.commit()
-    return _ticket_out(_load_ticket(db, t.id), full=True)
+    t = _load_ticket(db, t.id)
+    MAIL.notify(db, t, "raised", actor=actor, body=t.description or "",
+                actor_user_id=caller.user.id)
+    db.commit()
+    return _detail(db, t, caller)
 
 
 @router.get("/{ticket_id}", response_model=TicketOut)
@@ -330,7 +442,7 @@ def ticket(ticket_id: int, db: Session = Depends(get_db),
     t = _load_ticket(db, ticket_id)
     if not _may_touch(caller, t.project_id):
         raise NotFound(f"Ticket {ticket_id} not found.")
-    return _ticket_out(t, full=True)
+    return _detail(db, t, caller)
 
 
 @router.put("/{ticket_id}", response_model=TicketOut)
@@ -368,6 +480,10 @@ def update_ticket(ticket_id: int, req: TicketUpdateIn, db: Session = Depends(get
         t.priority = req.priority
     if req.status is not None and req.status != t.status:
         _check_status(req.status)
+        if req.status in ("Resolved", "Closed"):
+            raise RuleViolation(
+                "Resolve a ticket with its resolution, and close it from the resolved "
+                "state — not by changing the status directly.")
         changes.append(audit.change("status", t.status, req.status))
         t.status = req.status
     if req.assignee_id != t.assignee_id:
@@ -458,7 +574,11 @@ async def respond(ticket_id: int, caller: Caller = Depends(current_user),
     t.updated_at_utc = datetime.utcnow()
     audit.record(db, actor, "Responded", "Ticket", f"{t.number} {t.title}", project=t.project)
     db.commit()
-    return _ticket_out(_load_ticket(db, ticket_id), full=True)
+    t = _load_ticket(db, ticket_id)
+    MAIL.notify(db, t, "response", actor=actor, body=body.strip(),
+                actor_user_id=caller.user.id)
+    db.commit()
+    return _detail(db, t, caller)
 
 
 @router.get("/attachments/{attachment_id}")
@@ -504,3 +624,110 @@ def download(attachment_id: int, request: Request, exp: int | None = None,
         return FileResponse(FILES.path_for(a.storage_key), media_type=a.content_type,
                             headers=headers)
     return Response(content=a.data or b"", media_type=a.content_type, headers=headers)
+
+
+# ---- v1.6 actions ---------------------------------------------------------
+@router.post("/{ticket_id}/route", response_model=TicketOut)
+def route(ticket_id: int, body: dict = Body(...), db: Session = Depends(get_db),
+          actor: str = Depends(who), caller: Caller = Depends(current_user)):
+    """The project manager sends the ticket to the team that should own it.
+
+    A team is a team role. Naming a person within it is optional; the whole
+    team hears about it either way. Sending it again to another team is how a
+    ticket that landed in the wrong place is moved on.
+    """
+    t = _load_ticket(db, ticket_id)
+    if not _may_touch(caller, t.project_id):
+        raise NotFound(f"Ticket {ticket_id} not found.")
+    _require(caller, t, "route", "Only the project manager for this project can route its tickets.")
+    role = db.get(Role, int(body.get("team_role_id") or 0))
+    if role is None:
+        raise RuleViolation("Choose the team this ticket should go to.")
+    if role.is_customer:
+        raise RuleViolation(f"{role.name} is a customer role. Tickets go to a team at Aequm.")
+    person = None
+    if body.get("assignee_id"):
+        person = db.get(Person, int(body["assignee_id"]))
+        if person is None or person.role_id != role.id:
+            raise RuleViolation("That person is not in the team you chose.")
+    before = t.team_role.name if t.team_role else None
+    t.team_role_id, t.assignee_id = role.id, person.id if person else None
+    t.routed_by, t.routed_at_utc = actor, datetime.utcnow()
+    t.updated_at_utc = datetime.utcnow()
+    note = (body.get("note") or "").strip()
+    if note:
+        db.add(TicketResponse(ticket_id=t.id, author=actor,
+                              body=f"Sent to {role.name}: {note}", created_at_utc=datetime.utcnow()))
+    audit.record(db, actor, "Routed", "Ticket", f"{t.number} {t.title}", project=t.project,
+                 detail=(f"{before} → " if before else "to ") + role.name
+                 + (f", {person.name}" if person else ""))
+    db.commit()
+    t = _load_ticket(db, ticket_id)
+    MAIL.notify(db, t, "routed", actor=actor, body=note, actor_user_id=caller.user.id)
+    db.commit()
+    return _detail(db, t, caller)
+
+
+@router.post("/{ticket_id}/resolve", response_model=TicketOut)
+def resolve(ticket_id: int, body: dict = Body(...), db: Session = Depends(get_db),
+            actor: str = Depends(who), caller: Caller = Depends(current_user)):
+    """The team records what was done. The resolution is what the raiser reads
+    when deciding whether to close the ticket, so it has to say something."""
+    t = _load_ticket(db, ticket_id)
+    if not _may_touch(caller, t.project_id):
+        raise NotFound(f"Ticket {ticket_id} not found.")
+    _require(caller, t, "resolve", "Only the team the ticket was sent to can resolve it.")
+    text = (body.get("resolution") or "").strip()
+    if len(text) < 10:
+        raise RuleViolation("Describe the resolution — what was wrong and what was done.")
+    t.status, t.resolution = "Resolved", text
+    t.resolved_by, t.resolved_at_utc = actor, datetime.utcnow()
+    t.updated_at_utc = datetime.utcnow()
+    audit.record(db, actor, "Resolved", "Ticket", f"{t.number} {t.title}", project=t.project)
+    db.commit()
+    t = _load_ticket(db, ticket_id)
+    MAIL.notify(db, t, "resolved", actor=actor, body=text, actor_user_id=caller.user.id)
+    db.commit()
+    return _detail(db, t, caller)
+
+
+@router.post("/{ticket_id}/close", response_model=TicketOut)
+def close(ticket_id: int, db: Session = Depends(get_db), actor: str = Depends(who),
+          caller: Caller = Depends(current_user)):
+    """The raiser confirms the resolution worked."""
+    t = _load_ticket(db, ticket_id)
+    if not _may_touch(caller, t.project_id):
+        raise NotFound(f"Ticket {ticket_id} not found.")
+    _require(caller, t, "close", "Only whoever raised the ticket, or its project manager, can close it.")
+    t.status, t.updated_at_utc = "Closed", datetime.utcnow()
+    audit.record(db, actor, "Closed", "Ticket", f"{t.number} {t.title}", project=t.project)
+    db.commit()
+    return _detail(db, _load_ticket(db, ticket_id), caller)
+
+
+@router.post("/{ticket_id}/reopen", response_model=TicketOut)
+def reopen(ticket_id: int, body: dict = Body(...), db: Session = Depends(get_db),
+           actor: str = Depends(who), caller: Caller = Depends(current_user)):
+    """Not fixed. It goes back to the same team, with the reason on the thread,
+    and the earlier resolution is kept there too rather than overwritten."""
+    t = _load_ticket(db, ticket_id)
+    if not _may_touch(caller, t.project_id):
+        raise NotFound(f"Ticket {ticket_id} not found.")
+    _require(caller, t, "reopen", "Only whoever raised the ticket, or its project manager, can reopen it.")
+    why = (body.get("reason") or "").strip()
+    if len(why) < 5:
+        raise RuleViolation("Say what is still wrong, so the team knows where to look.")
+    earlier = t.resolution
+    db.add(TicketResponse(ticket_id=t.id, author=actor, created_at_utc=datetime.utcnow(),
+                          body=f"Reopened: {why}" + (f"\n\nEarlier resolution: {earlier}" if earlier else "")))
+    # back to the team if it had one, otherwise back to the project manager
+    t.status = "InProgress" if t.team_role_id else "Open"
+    t.resolution = t.resolved_by = t.resolved_at_utc = None
+    t.updated_at_utc = datetime.utcnow()
+    audit.record(db, actor, "Reopened", "Ticket", f"{t.number} {t.title}", project=t.project, detail=why)
+    db.commit()
+    t = _load_ticket(db, ticket_id)
+    MAIL.notify(db, t, "response", actor=actor, body=f"Reopened: {why}",
+                actor_user_id=caller.user.id)
+    db.commit()
+    return _detail(db, t, caller)

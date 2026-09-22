@@ -299,6 +299,19 @@ class Ticket(Base):
     status: Mapped[str] = mapped_column("Status", String(12), nullable=False, default="Open")
     assignee_id: Mapped[int | None] = mapped_column("AssigneeId", ForeignKey("person.Id", ondelete="SET NULL"))
     created_by: Mapped[str] = mapped_column("CreatedBy", String(120), nullable=False, default="")
+    # v1.6 triage. Every ticket first waits on the project manager, who sends it
+    # to a team; the team records the resolution; the raiser confirms or reopens.
+    raised_by_user_id: Mapped[int | None] = mapped_column(
+        "RaisedByUserId", ForeignKey("app_user.Id", ondelete="SET NULL"))
+    pm_id: Mapped[int | None] = mapped_column(
+        "PmId", ForeignKey("person.Id", ondelete="SET NULL"))
+    team_role_id: Mapped[int | None] = mapped_column(
+        "TeamRoleId", ForeignKey("role.Id", ondelete="SET NULL"))
+    routed_by: Mapped[str | None] = mapped_column("RoutedBy", String(120))
+    routed_at_utc: Mapped[datetime | None] = mapped_column("RoutedAtUtc", DateTime)
+    resolution: Mapped[str | None] = mapped_column("Resolution", Text)
+    resolved_by: Mapped[str | None] = mapped_column("ResolvedBy", String(120))
+    resolved_at_utc: Mapped[datetime | None] = mapped_column("ResolvedAtUtc", DateTime)
     created_at_utc: Mapped[datetime] = mapped_column("CreatedAtUtc", DateTime, nullable=False)
     updated_at_utc: Mapped[datetime] = mapped_column("UpdatedAtUtc", DateTime, nullable=False)
 
@@ -307,7 +320,9 @@ class Ticket(Base):
     module: Mapped[TicketModule | None] = relationship()
     process: Mapped["Process | None"] = relationship(foreign_keys=[process_id])
     process_step: Mapped["ProcessStep | None"] = relationship(foreign_keys=[process_step_id])
-    assignee: Mapped[Person | None] = relationship()
+    assignee: Mapped[Person | None] = relationship(foreign_keys="Ticket.assignee_id")
+    pm: Mapped["Person | None"] = relationship(foreign_keys="Ticket.pm_id")
+    team_role: Mapped["Role | None"] = relationship(foreign_keys="Ticket.team_role_id")
     responses: Mapped[list["TicketResponse"]] = relationship(
         back_populates="ticket", cascade="all, delete-orphan", order_by="TicketResponse.id")
     attachments: Mapped[list["TicketAttachment"]] = relationship(
@@ -426,12 +441,18 @@ class Process(Base):
     under a single module would force a copy per module, and copies drift.
     """
     __tablename__ = "process"
+    __table_args__ = (UniqueConstraint("ProjectId", "Name", name="uq_process_project_name"),)
     id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column("Name", String(160), nullable=False, unique=True)
+    # v1.6: a process is defined for one project. Null only on processes made
+    # before this version, which the screen asks to be given a project.
+    project_id: Mapped[int | None] = mapped_column(
+        "ProjectId", ForeignKey("project.Id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column("Name", String(160), nullable=False)
     code: Mapped[str | None] = mapped_column("Code", String(40))
     description: Mapped[str | None] = mapped_column("Description", String(1000))
     active: Mapped[int] = mapped_column("Active", Integer, nullable=False, default=1)
 
+    project: Mapped["Project | None"] = relationship()
     steps: Mapped[list["ProcessStep"]] = relationship(
         back_populates="process", cascade="all, delete-orphan",
         order_by="ProcessStep.sort_order")
@@ -469,3 +490,48 @@ class ModuleProcess(Base):
 
     module: Mapped["TicketModule"] = relationship()
     process: Mapped[Process] = relationship()
+
+
+# ============================================================ v1.6 mail
+class AppSetting(Base):
+    """Key-value settings changed from a screen rather than the .env file.
+    Mail passwords are stored encrypted (see services/mail.py)."""
+    __tablename__ = "app_setting"
+    key: Mapped[str] = mapped_column("SettingKey", String(60), primary_key=True)
+    value: Mapped[str | None] = mapped_column("SettingValue", Text)
+
+
+class EmailOutbox(Base):
+    """Every message the system means to send, and what became of it.
+    Written inside the request; sent later by the worker, with retries."""
+    __tablename__ = "email_outbox"
+    __table_args__ = (Index("ix_outbox_due", "Status", "NextTryUtc"),)
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    to_address: Mapped[str] = mapped_column("ToAddress", String(200), nullable=False)
+    subject: Mapped[str] = mapped_column("Subject", String(300), nullable=False)
+    body_text: Mapped[str] = mapped_column("BodyText", Text, nullable=False)
+    body_html: Mapped[str | None] = mapped_column("BodyHtml", Text)
+    ticket_id: Mapped[int | None] = mapped_column(
+        "TicketId", ForeignKey("ticket.Id", ondelete="SET NULL"))
+    reason: Mapped[str] = mapped_column("Reason", String(40), nullable=False, default="")
+    status: Mapped[str] = mapped_column("Status", String(12), nullable=False, default="queued")
+    attempts: Mapped[int] = mapped_column("Attempts", Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column("LastError", String(500))
+    created_at_utc: Mapped[datetime] = mapped_column("CreatedAtUtc", DateTime, nullable=False)
+    next_try_utc: Mapped[datetime | None] = mapped_column("NextTryUtc", DateTime)
+    sent_at_utc: Mapped[datetime | None] = mapped_column("SentAtUtc", DateTime)
+
+
+class EmailInbound(Base):
+    """Every message read from the mailbox, and what was done with it.
+    The Message-ID is unique, so reading the mailbox twice posts nothing twice."""
+    __tablename__ = "email_inbound"
+    id: Mapped[int] = mapped_column("Id", Integer, primary_key=True, autoincrement=True)
+    message_id: Mapped[str] = mapped_column("MessageId", String(300), nullable=False, unique=True)
+    from_address: Mapped[str] = mapped_column("FromAddress", String(200), nullable=False)
+    subject: Mapped[str] = mapped_column("Subject", String(300), nullable=False, default="")
+    ticket_id: Mapped[int | None] = mapped_column(
+        "TicketId", ForeignKey("ticket.Id", ondelete="SET NULL"))
+    outcome: Mapped[str] = mapped_column("Outcome", String(12), nullable=False)
+    note: Mapped[str | None] = mapped_column("Note", String(500))
+    received_at_utc: Mapped[datetime] = mapped_column("ReceivedAtUtc", DateTime, nullable=False)

@@ -382,6 +382,19 @@ def test_the_last_administrator_cannot_demote_themselves(admin_token):
 
 # ================================================ processes and steps
 
+_PP = {"id": None}
+
+
+def _pp(tok):
+    """The project these tests' processes belong to — the same one their
+    tickets are raised on, since a ticket's process must be its project's."""
+    if _PP["id"] is None:
+        _PP["id"] = ok(c.post("/api/projects", headers=H(tok), json={
+            "code": "PRJ-1", "name": "SAP rollout", "plannedStart": "2026-01-05",
+            "calendarDays": False}), 201)["id"]
+    return _PP["id"]
+
+
 @pytest.fixture(scope="module")
 def module_id(admin_token):
     m = ok(c.post("/api/tickets/modules", headers=H(admin_token),
@@ -390,7 +403,7 @@ def module_id(admin_token):
 
 
 def test_a_process_is_created_with_its_steps(admin_token):
-    p = ok(c.post("/api/processes", headers=H(admin_token), json={
+    p = ok(c.post("/api/processes", headers=H(admin_token), json={"project_id": _pp(admin_token), 
         "name": "Period-end close", "code": "FI-CLOSE",
         "description": "Monthly close",
         "steps": [{"name": "Freeze postings"}, {"name": "Run depreciation"},
@@ -402,7 +415,7 @@ def test_a_process_is_created_with_its_steps(admin_token):
 
 def test_a_duplicate_process_name_is_refused(admin_token):
     r = c.post("/api/processes", headers=H(admin_token),
-               json={"name": "Period-end close"})
+               json={"project_id": _pp(admin_token), "name": "Period-end close"})
     assert r.status_code == 409
 
 
@@ -453,10 +466,7 @@ def test_one_process_can_serve_several_modules(admin_token, module_id):
 @pytest.fixture(scope="module")
 def project_id(admin_token):
     _TOKEN["v"] = admin_token
-    p = ok(c.post("/api/projects", headers=H(admin_token), json={
-        "code": "PRJ-1", "name": "SAP rollout", "plannedStart": "2026-01-05",
-        "calendarDays": False}), 201)
-    return p["id"]
+    return _pp(admin_token)
 
 
 _TOKEN = {"v": None}
@@ -486,7 +496,7 @@ def test_a_step_without_its_process_is_refused(admin_token, module_id, project_i
 
 def test_a_process_the_module_does_not_run_is_refused(admin_token, module_id, project_id):
     other = ok(c.post("/api/processes", headers=H(admin_token),
-                      json={"name": "Vendor onboarding",
+                      json={"project_id": _pp(admin_token), "name": "Vendor onboarding",
                             "steps": [{"name": "Collect documents"}]}))
     r = _mk_ticket(project_id, module_id=module_id, process_id=other["id"])
     assert r.status_code == 409 and "not one of the processes assigned" in r.text

@@ -82,6 +82,8 @@ def to_summary(p: Project, acts: list[Activity], result: engine.ScheduleResult) 
     all_done = bool(leaves) and all(a.actual_finish is not None for a in leaves)
     finishes = [a.actual_finish for a in leaves if a.actual_finish is not None]
     return ProjectSummary(
+        customer_id=getattr(p, "customer_id", None),
+        customer_name=p.customer.name if getattr(p, "customer", None) else None,
         id=p.id, code=p.code, name=p.name, status=p.status,
         planned_start=p.planned_start, planned_end=p.planned_end,
         forecast_finish=result.project_end_date if acts else None,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, getActingAs, getCurrentUser } from '../api.js'
 import { FilePicker, UploadProgress, AttachmentGallery } from '../components/Uploads.jsx'
+import TicketFlow, { WithCell, STAGES } from '../components/TicketFlow.jsx'
 import Modal from '../components/Modal.jsx'
 import Notice from '../components/Notice.jsx'
 import { IcoTrash } from '../components/Icons.jsx'
@@ -32,7 +33,7 @@ function CreateDialog({ projects, modules, people, defaultProjectId, onClose, on
   const [f, setF] = useState({
     projectId: defaultProjectId || '', phaseId: '', moduleId: '',
     processId: '', processStepId: '',
-    title: '', description: '', priority: 'Medium', assigneeId: '',
+    title: '', description: '', priority: 'Medium',
   })
   const [phases, setPhases] = useState([])
   const [procs, setProcs] = useState([])
@@ -50,9 +51,9 @@ function CreateDialog({ projects, modules, people, defaultProjectId, onClose, on
   // which the API refuses anyway — better not to offer it at all.
   useEffect(() => {
     setF((prev) => ({ ...prev, processId: '', processStepId: '' }))
-    if (f.moduleId) api.processes(f.moduleId).then(setProcs).catch(() => setProcs([]))
+    if (f.moduleId) api.processes(f.moduleId, f.projectId).then(setProcs).catch(() => setProcs([]))
     else setProcs([])
-  }, [f.moduleId])
+  }, [f.moduleId, f.projectId])
 
   const [progress, setProgress] = useState(null)
   async function save() {
@@ -63,7 +64,6 @@ function CreateDialog({ projects, modules, people, defaultProjectId, onClose, on
         project_id: f.projectId, phase_id: f.phaseId, module_id: f.moduleId,
         process_id: f.processId, process_step_id: f.processStepId,
         title: f.title, description: f.description, priority: f.priority,
-        assignee_id: f.assigneeId,
       }, files, files.length ? setProgress : null)
       onSaved(t)
     } catch (e) { onError(e) } finally { setBusy(false); setProgress(null) }
@@ -134,15 +134,7 @@ function CreateDialog({ projects, modules, people, defaultProjectId, onClose, on
             {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
           </select>
         </div>
-        {!getCurrentUser()?.is_customer && (
-          <div className="fld">
-            <label>Allocate to</label>
-            <select value={f.assigneeId} onChange={set('assigneeId')}>
-              <option value="">— unallocated —</option>
-              {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </div>
-        )}
+        {/* No allocation while raising: every ticket goes to the project manager first. */}
       </div>
       <div className="fld">
         <label>Title *</label>
@@ -161,7 +153,7 @@ function CreateDialog({ projects, modules, people, defaultProjectId, onClose, on
 }
 
 // ---- ticket detail (thread) -------------------------------------------------
-function TicketDetail({ id, people, modules, onClose, onChanged, onError }) {
+function TicketDetail({ id, people, roles, modules, onClose, onChanged, onError }) {
   const [t, setT] = useState(null)
   const [reply, setReply] = useState('')
   const [replyProgress, setReplyProgress] = useState(null)
@@ -213,30 +205,18 @@ function TicketDetail({ id, people, modules, onClose, onChanged, onError }) {
         </span>
       </div>
 
-      <div className="row3" style={{ margin: '10px 0' }}>
-        <div className="fld">
-          <label>Allocated to</label>
-          {isCustomer ? <span className="ro">{t.assigneeName || 'Not yet allocated'}</span> :
-          <select value={t.assigneeId || ''} onChange={(e) => patch({ assigneeId: e.target.value || null, moduleId: t.moduleId, phaseId: t.phaseId })}>
-            <option value="">— unallocated —</option>
-            {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>}
+      <TicketFlow t={t} roles={roles} people={people}
+                  onChanged={(u) => { setT(u); onChanged() }} onError={onError} />
+      {!isCustomer && (
+        <div className="row3" style={{ margin: '10px 0' }}>
+          <div className="fld">
+            <label>Priority</label>
+            <select value={t.priority} onChange={(e) => patch({ priority: e.target.value, moduleId: t.moduleId, phaseId: t.phaseId })}>
+              {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
+            </select>
+          </div>
         </div>
-        <div className="fld">
-          <label>Priority</label>
-          {isCustomer ? <span className="ro">{t.priority}</span> :
-          <select value={t.priority} onChange={(e) => patch({ priority: e.target.value, assigneeId: t.assigneeId, moduleId: t.moduleId, phaseId: t.phaseId })}>
-            {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
-          </select>}
-        </div>
-        <div className="fld">
-          <label>Status</label>
-          {isCustomer ? <span className="ro">{t.status === 'InProgress' ? 'In progress' : t.status}</span> :
-          <select value={t.status} onChange={(e) => patch({ status: e.target.value, assigneeId: t.assigneeId, moduleId: t.moduleId, phaseId: t.phaseId })}>
-            {STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-          </select>}
-        </div>
-      </div>
+      )}
 
       {t.description && <div className="tkt-desc">{t.description}</div>}
       <AttachmentGallery list={t.attachments} />
@@ -280,8 +260,9 @@ export default function Tickets() {
   const [projects, setProjects] = useState([])
   const [modules, setModules] = useState([])
   const [people, setPeople] = useState([])
+  const [roles, setRoles] = useState([])
   const [rows, setRows] = useState([])
-  const [flt, setFlt] = useState({ projectId: '', status: '', priority: '', assigneeId: '' })
+  const [flt, setFlt] = useState({ projectId: '', stage: '', priority: '', mine: false })
   const [creating, setCreating] = useState(false)
   const [openId, setOpenId] = useState(null)
   const [error, setError] = useState(null)
@@ -291,17 +272,18 @@ export default function Tickets() {
     // A customer account is not given the team list — the gate refuses it,
     // and a customer has no business choosing who at Aequm picks the ticket up.
     Promise.all([api.projects(), api.ticketModules(),
-                 isCustomer ? Promise.resolve([]) : api.people()])
-      .then(([pr, m, pe]) => { setProjects(pr); setModules(m); setPeople(pe) })
+                 isCustomer ? Promise.resolve([]) : api.people(),
+                 isCustomer ? Promise.resolve([]) : api.roles()])
+      .then(([pr, m, pe, ro]) => { setProjects(pr); setModules(m); setPeople(pe); setRoles(ro) })
       .catch(setError)
   }, [isCustomer])
 
   const load = () => {
     const p = {}
     if (flt.projectId) p.project_id = flt.projectId
-    if (flt.status) p.status = flt.status
     if (flt.priority) p.priority = flt.priority
-    if (flt.assigneeId) p.assignee_id = flt.assigneeId
+    if (flt.stage) p.stage = flt.stage
+    if (flt.mine) p.waiting_on_me = 'true'
     api.tickets(p).then(setRows).catch(setError)
   }
   useEffect(() => { load() }, [flt])
@@ -317,7 +299,7 @@ export default function Tickets() {
     <div className="page">
       <h2>Tickets</h2>
       <p className="lead">Raise a ticket inside a project — against a phase and a configured module (within SAP
-        or outside SAP) — attach documents, allocate it to someone, and follow the responses as they land.</p>
+        or outside SAP) — with screenshots or video. The project manager sends each one to the right team, the team records the resolution, and whoever raised it confirms.</p>
       <Notice error={error} onClose={() => setError(null)} />
 
       <div className="tkt-bar">
@@ -325,18 +307,19 @@ export default function Tickets() {
           <option value="">All projects</option>
           {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
         </select>
-        <select value={flt.status} onChange={set('status')}>
-          <option value="">Any status</option>
-          {STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+        <select value={flt.stage} onChange={set('stage')}>
+          <option value="">Any stage</option>
+          {STAGES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
         <select value={flt.priority} onChange={set('priority')}>
           <option value="">Any priority</option>
           {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
         </select>
-        <select value={flt.assigneeId} onChange={set('assigneeId')}>
-          <option value="">Anyone</option>
-          {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        <label className="mine-toggle">
+          <input type="checkbox" checked={flt.mine}
+                 onChange={(e) => setFlt({ ...flt, mine: e.target.checked })} />
+          Waiting on me
+        </label>
         <div className="grow" />
         <button className="pri" onClick={() => setCreating(true)}>+ New ticket</button>
       </div>
@@ -345,7 +328,7 @@ export default function Tickets() {
       <table className="grid">
         <thead>
           <tr><th>No.</th><th>Title</th><th>Project</th><th>Phase</th><th>Process</th><th>Module</th>
-              <th>Priority</th><th>Status</th><th>Allocated to</th><th>Replies</th><th>Updated</th><th /></tr>
+              <th>Priority</th><th>With</th><th>Replies</th><th>Updated</th><th /></tr>
         </thead>
         <tbody>
           {rows.length === 0 && <tr><td colSpan={11} className="muted">No tickets match — raise the first one.</td></tr>}
@@ -361,8 +344,7 @@ export default function Tickets() {
                 : '—'}</td>
               <td>{t.moduleName ? <>{t.moduleName} <span className="muted">({t.moduleType === 'SAP' ? 'SAP' : 'non-SAP'})</span></> : '—'}</td>
               <td><span className={`pill ${PRIO_CLASS[t.priority]}`}>{t.priority}</span></td>
-              <td><span className={`pill ${STATUS_CLASS[t.status]}`}>{STATUS_LABEL[t.status]}</span></td>
-              <td>{t.assigneeName || <span className="muted">unallocated</span>}</td>
+              <td><WithCell t={t} /></td>
               <td style={{ textAlign: 'center' }}>{t.responseCount}</td>
               <td className="muted">{when(t.updatedAtUtc)}</td>
               <td onClick={(e) => e.stopPropagation()}>
@@ -382,7 +364,7 @@ export default function Tickets() {
                       onError={setError} />
       )}
       {openId && (
-        <TicketDetail id={openId} people={people} modules={modules}
+        <TicketDetail id={openId} people={people} roles={roles} modules={modules}
                       onClose={() => setOpenId(null)} onChanged={load} onError={setError} />
       )}
     </div>

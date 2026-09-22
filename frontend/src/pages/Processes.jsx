@@ -11,6 +11,8 @@ import { api } from '../api.js'
 export default function Processes() {
   const [procs, setProcs] = useState([])
   const [modules, setModules] = useState([])
+  const [projects, setProjects] = useState([])
+  const [projectId, setProjectId] = useState('')
   const [sel, setSel] = useState(null)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
@@ -21,15 +23,19 @@ export default function Processes() {
   const [descr, setDescr] = useState('')
   const [stepText, setStepText] = useState('')
 
-  async function load(keepId) {
+  async function load(keepId, pid = projectId) {
     try {
-      const [p, m] = await Promise.all([api.processes(), api.ticketModules()])
-      setProcs(p); setModules(m)
+      const [p, m, pr] = await Promise.all([
+        pid ? api.processes(null, pid) : Promise.resolve([]),
+        api.ticketModules(), api.projects()])
+      setProcs(p); setModules(m); setProjects(pr)
+      if (!pid && pr.length) { setProjectId(String(pr[0].id)); return load(keepId, String(pr[0].id)) }
       const keep = keepId ?? sel?.id
       setSel(p.find(x => x.id === keep) || p[0] || null)
     } catch (e) { setErr(e.message) }
   }
   useEffect(() => { load() }, [])   // eslint-disable-line
+  function pickProject(pid) { setProjectId(pid); setSel(null); load(null, pid) }
 
   async function createProcess(e) {
     e.preventDefault()
@@ -38,6 +44,7 @@ export default function Processes() {
       const steps = stepText.split('\n').map(s => s.trim()).filter(Boolean)
                             .map((s, i) => ({ name: s, sort_order: i + 1 }))
       const p = await api.createProcess({
+        project_id: Number(projectId),
         name: name.trim(), code: code.trim() || null,
         description: descr.trim() || null, steps })
       setName(''); setCode(''); setDescr(''); setStepText('')
@@ -94,7 +101,13 @@ export default function Processes() {
     <div className="page">
       <div className="page-head">
         <h2>Processes</h2>
-        <p>A process and its ordered steps, then the modules that run it. Tickets
+        <div className="proc-project">
+          <label htmlFor="procProject">Project</label>
+          <select id="procProject" value={projectId} onChange={(e) => pickProject(e.target.value)}>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+          </select>
+        </div>
+        <p>Each project defines its own processes and their ordered steps, then says which modules run them. Tickets
           can be raised against a step, so the work is located inside the process
           rather than only against the module.</p>
       </div>
@@ -104,7 +117,7 @@ export default function Processes() {
 
       <div className="proc-layout">
         <div className="proc-list">
-          <h3>Defined</h3>
+          <h3>Defined for {projects.find((p) => String(p.id) === projectId)?.code || 'this project'}</h3>
           {procs.length === 0 && <div className="empty">None yet.</div>}
           <ul>
             {procs.map(p => (
@@ -134,7 +147,7 @@ export default function Processes() {
             <textarea id="ps" rows={5} value={stepText}
                       onChange={e => setStepText(e.target.value)}
                       placeholder={'Freeze postings\nRun depreciation\nReconcile GR/IR'} />
-            <button type="submit" className="primary" disabled={busy || !name.trim()}>
+            <button type="submit" className="primary" disabled={busy || !name.trim() || !projectId}>
               Create process
             </button>
           </form>

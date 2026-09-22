@@ -79,13 +79,9 @@ export default function SignIn({ onSignedIn }) {
     <div className="signin-wrap">
       <div className="signin-card">
         <div className="signin-head">
-          <span className="logo-sq" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5">
-              <path d="M4 7h8M4 12h14M4 17h10" />
-            </svg>
-          </span>
+          <img className="logo-sq-img" src="/aequm-mark.png" alt="Aequm" width="40" height="40" />
           <div>
-            <h1>ProjectSystem</h1>
+            <h1>Aequm ProjectSystem</h1>
             <p>Plans, phases and tickets for Aequm India</p>
           </div>
         </div>

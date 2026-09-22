@@ -62,6 +62,9 @@ class PersonOut(Camel):
     email: Optional[str]
     role_id: Optional[int]
     role_name: Optional[str]
+    # which customer this person is from, if any: lets the phase screen offer
+    # only the project's own customer contacts for a customer role
+    customer_id: Optional[int] = None
 
 
 class WorkloadOut(Camel):
@@ -103,6 +106,8 @@ class ProjectSummary(Camel):
     actual_finish: Optional[date]
     owner_name: Optional[str]
     owner_id: Optional[int]
+    customer_id: Optional[int] = None
+    customer_name: Optional[str] = None
     organisation_name: Optional[str]
     organisation_id: Optional[int]
     team_size: int
@@ -370,6 +375,19 @@ class TicketOut(Camel):
     created_by: str
     created_at_utc: datetime
     updated_at_utc: datetime
+    # v1.6 triage
+    stage: str = "pm"
+    pm_id: Optional[int] = None
+    pm_name: Optional[str] = None
+    team_role_id: Optional[int] = None
+    team_name: Optional[str] = None
+    routed_by: Optional[str] = None
+    routed_at_utc: Optional[datetime] = None
+    resolution: Optional[str] = None
+    resolved_by: Optional[str] = None
+    resolved_at_utc: Optional[datetime] = None
+    raised_by_user_id: Optional[int] = None
+    actions: list[str] = []
     response_count: int = 0
     attachments: list[TicketAttachmentOut] = Field(default_factory=list)
     responses: list[TicketResponseOut] = Field(default_factory=list)

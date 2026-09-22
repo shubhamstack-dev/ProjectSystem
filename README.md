@@ -1,4 +1,86 @@
 
+## v1.6 — the project manager routes every ticket, email in and out, and more
+
+### Every ticket goes to the project manager first
+
+Nobody allocates a ticket while raising it — the *Allocate to* field and the
+*Allocated to* column are gone. Each ticket lands with the project's manager
+(the project's **Owner**), who sends it to the team that should own it:
+
+    raised ─> with the project manager ─route─> with a team ─resolve─> resolved ─close─> closed
+                                                    ^                      │
+                                                    └─────── reopen ───────┘
+
+* **Route** — the project manager picks a team (a team role) and, optionally, a
+  person in it, with a note that goes on the thread. Re-routing moves a ticket
+  that landed in the wrong team.
+* **Resolve** — someone in that team records the resolution: what was wrong and
+  what was done. It is required, and at least a sentence.
+* **Close or reopen** — whoever raised it reads the resolution and confirms, or
+  says what is still wrong. A reopened ticket goes back to the same team, and the
+  earlier resolution stays on the thread rather than being overwritten.
+
+The list shows a **With** column instead — the stage and who holds it — and a
+**Waiting on me** switch: the PM's routing queue, a team's resolving queue, a
+customer's tickets awaiting their confirmation.
+
+The rules live in one place on the server and drive both the API and the
+buttons, so the screen never offers a move the server would refuse. A project
+with no manager named does not strand its tickets: an administrator routes them,
+and the ticket says why.
+
+### Email: SMTP out, IMAP in
+
+*Email* (administrators) configures both, with presets for Microsoft 365,
+Google Workspace and Zoho. SMTP only sends; reading replies is IMAP — two
+protocols, so two panels, even when it is one mailbox.
+
+**What gets sent:** a new ticket to its project manager, plus an acknowledgement
+to the raiser carrying the `[TCK-…]` number; a routed ticket to the whole team;
+a reply to the other side; a resolution to the raiser. Nobody is emailed about
+their own action — except that first acknowledgement, which is what lets the
+raiser reply by email at all.
+
+**Sending never happens inside a request.** Messages go into an outbox and a
+background worker sends them, retrying with back-off up to six times. A slow or
+down mail server cannot make raising a ticket slow or make it fail, and the
+outbox is the record of what was sent to whom.
+
+**Replies come back onto the ticket** — from an active account allowed to see
+that ticket, with the number still in the subject. Quoted history is trimmed,
+attachments go through the same checks as uploads, automatic replies and bounces
+are ignored, and each message is posted once however often the mailbox is read.
+
+Passwords are never shown back and are stored encrypted with `SECRET_KEY`.
+*Send test* and *Test the mailbox* report a wrong password in plain words, on
+the spot. `SERVER-STEPS.md` covers Microsoft 365's SMTP AUTH and app passwords.
+
+### Phases: the customer side
+
+Each phase now has two sides: Aequm's team, and the customer's own people. A
+customer role can be filled only by one of *this project's* customer contacts —
+never by an Aequm colleague, never by another customer's person — and a team
+role is not given to a customer contact. A project with no customer yet says so.
+
+### Processes belong to a project
+
+Each process, and so each of its steps, is defined for one project; the
+*Processes* screen starts by choosing it. Two projects may each have their own
+"Month-end close". A ticket can only name a process of its own project, and a
+customer sees only their projects' processes. Processes made before v1.6 can be
+given a project once; after that they cannot move, since that would strand the
+tickets raised on them. Modules stay shared across projects.
+
+### The Aequm mark
+
+The gradient mark is now the logo in the sidebar, on the sign-in and password
+screens, and the browser icon.
+
+### Tests
+
+    cd backend && pytest -q        # 122 tests
+
+
 ## v1.5 — customer users, screenshots and video, and one gate in front of the API
 
 ### Customer users, straight onto the customer

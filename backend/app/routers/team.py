@@ -130,7 +130,16 @@ def delete_role(role_id: int, db: Session = Depends(get_db), actor: str = Depend
 @router.get("/people", response_model=list[PersonOut])
 def people(db: Session = Depends(get_db)):
     rows = db.execute(select(Person).options(selectinload(Person.role)).order_by(Person.name)).scalars().all()
-    return [mapper.person_out(p) for p in rows]
+    from ..models import AppUser
+    by_account = {u.person_id: u.customer_id for u in db.execute(
+        select(AppUser).where(AppUser.person_id.is_not(None))).scalars() if u.customer_id}
+    out = []
+    for p in rows:
+        o = mapper.person_out(p)
+        o.customer_id = by_account.get(p.id) or (
+            p.role.customer_id if p.role and p.role.is_customer else None)
+        out.append(o)
+    return out
 
 
 @router.post("/people", response_model=PersonOut, status_code=201)
