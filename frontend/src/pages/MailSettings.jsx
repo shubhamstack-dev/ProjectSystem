@@ -8,9 +8,10 @@ import { api } from '../api.js'
   the stored one.
 */
 const BLANK = {
-  smtp_host: '', smtp_port: '587', smtp_security: 'starttls', smtp_user: '', smtp_password: '',
+  smtp_host: '', smtp_port: '587', smtp_security: 'starttls', smtp_user: '', smtp_password: '', smtp_auth: 'password',
   from_address: '', from_name: 'Aequm ProjectSystem', reply_to: '', app_url: '',
-  imap_enabled: '0', imap_host: '', imap_port: '993', imap_user: '', imap_password: '',
+  imap_enabled: '0', imap_host: '', imap_port: '993', imap_user: '', imap_password: '', imap_auth: 'password',
+  oauth_tenant_id: '', oauth_client_id: '', oauth_client_secret: '',
   imap_folder: 'INBOX', poll_minutes: '2',
 }
 const PRESETS = {
@@ -24,7 +25,7 @@ const PRESETS = {
 
 export default function MailSettings() {
   const [f, setF] = useState(BLANK)
-  const [has, setHas] = useState({ smtp_password: false, imap_password: false })
+  const [has, setHas] = useState({ smtp_password: false, imap_password: false, oauth_client_secret: false })
   const [ready, setReady] = useState({ sending_ready: false, receiving_ready: false })
   const [outbox, setOutbox] = useState([])
   const [inbound, setInbound] = useState([])
@@ -34,7 +35,7 @@ export default function MailSettings() {
 
   function take(r) {
     const s = r.settings
-    setHas({ smtp_password: !!s.smtp_password, imap_password: !!s.imap_password })
+    setHas({ smtp_password: !!s.smtp_password, imap_password: !!s.imap_password, oauth_client_secret: !!s.oauth_client_secret })
     setF({ ...BLANK, ...Object.fromEntries(Object.entries(s).map(([k, v]) =>
       [k, typeof v === 'boolean' ? '' : String(v ?? '')])) })
     setReady({ sending_ready: r.sending_ready, receiving_ready: r.receiving_ready })
@@ -82,11 +83,16 @@ export default function MailSettings() {
                 <option value="ssl">SSL (port 465)</option>
                 <option value="none">None (not recommended)</option>
               </select></label>
+            <label>Authentication
+              <select value={f.smtp_auth} onChange={set('smtp_auth')}>
+                <option value="password">Password / app password</option>
+                <option value="oauth">Microsoft 365 (OAuth, no password)</option>
+              </select></label>
             <label>User<input value={f.smtp_user} onChange={set('smtp_user')} autoComplete="off" /></label>
-            <label>Password
+            {f.smtp_auth !== 'oauth' && <label>Password
               <input type="password" value={f.smtp_password} onChange={set('smtp_password')}
                      autoComplete="new-password"
-                     placeholder={has.smtp_password ? 'Set — leave empty to keep it' : 'App password'} /></label>
+                     placeholder={has.smtp_password ? 'Set — leave empty to keep it' : 'App password'} /></label>}
             <label>From address<input value={f.from_address} onChange={set('from_address')} placeholder="tickets@aequm.in" /></label>
             <label>From name<input value={f.from_name} onChange={set('from_name')} /></label>
             <label>Reply-To <small>(the mailbox read below)</small>
@@ -111,11 +117,16 @@ export default function MailSettings() {
           <div className="mail-fields">
             <label>Server<input value={f.imap_host} onChange={set('imap_host')} placeholder="outlook.office365.com" /></label>
             <label>Port<input value={f.imap_port} onChange={set('imap_port')} /></label>
+            <label>Authentication
+              <select value={f.imap_auth} onChange={set('imap_auth')}>
+                <option value="password">Password / app password</option>
+                <option value="oauth">Microsoft 365 (OAuth, no password)</option>
+              </select></label>
             <label>Mailbox user<input value={f.imap_user} onChange={set('imap_user')} autoComplete="off" /></label>
-            <label>Password
+            {f.imap_auth !== 'oauth' && <label>Password
               <input type="password" value={f.imap_password} onChange={set('imap_password')}
                      autoComplete="new-password"
-                     placeholder={has.imap_password ? 'Set — leave empty to keep it' : 'App password'} /></label>
+                     placeholder={has.imap_password ? 'Set — leave empty to keep it' : 'App password'} /></label>}
             <label>Folder<input value={f.imap_folder} onChange={set('imap_folder')} /></label>
             <label>Check every (minutes)<input value={f.poll_minutes} onChange={set('poll_minutes')} /></label>
           </div>
@@ -131,6 +142,24 @@ export default function MailSettings() {
           </div>
         </section>
       </div>
+
+      {(f.smtp_auth === 'oauth' || f.imap_auth === 'oauth') && (
+        <section className="mail-oauth" style={{ marginTop: 16 }}>
+          <h3 style={{ margin: '0 0 6px' }}>Microsoft 365 app (OAuth)</h3>
+          <p className="muted" style={{ margin: '0 0 10px' }}>
+            Leave these empty to reuse the sign-in app from <code>.env</code> (ENTRA_TENANT_ID / ENTRA_CLIENT_ID / ENTRA_CLIENT_SECRET).
+            The app needs Exchange Online application permissions <b>IMAP.AccessAsApp</b> and <b>SMTP.SendAsApp</b> with admin consent,
+            and the mailbox must be granted to the app in Exchange &mdash; see SERVER-STEPS.md.
+          </p>
+          <div className="mail-fields">
+            <label>Tenant ID<input value={f.oauth_tenant_id} onChange={set('oauth_tenant_id')} placeholder="from .env" autoComplete="off" /></label>
+            <label>Client ID<input value={f.oauth_client_id} onChange={set('oauth_client_id')} placeholder="from .env" autoComplete="off" /></label>
+            <label>Client secret
+              <input type="password" value={f.oauth_client_secret} onChange={set('oauth_client_secret')} autoComplete="new-password"
+                     placeholder={has.oauth_client_secret ? 'Set — leave empty to keep it' : 'from .env'} /></label>
+          </div>
+        </section>
+      )}
 
       <div className="mail-save">
         <button type="button" className="primary" disabled={busy} onClick={save}>Save settings</button>

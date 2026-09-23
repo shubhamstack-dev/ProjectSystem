@@ -38,14 +38,16 @@ from sqlalchemy import select, update
 
 from .. import config, models as M
 
-SECRET_KEYS = {"smtp_password", "imap_password"}
+SECRET_KEYS = {"smtp_password", "imap_password", "oauth_client_secret"}
 DEFAULTS = {
     "smtp_host": "", "smtp_port": "587", "smtp_security": "starttls",
-    "smtp_user": "", "smtp_password": "",
+    "smtp_user": "", "smtp_password": "", "smtp_auth": "password",
     "from_address": "", "from_name": "Aequm ProjectSystem", "reply_to": "",
     "imap_enabled": "0", "imap_host": "", "imap_port": "993",
-    "imap_user": "", "imap_password": "", "imap_folder": "INBOX",
+    "imap_user": "", "imap_password": "", "imap_folder": "INBOX", "imap_auth": "password",
     "poll_minutes": "2", "app_url": "",
+    # Microsoft 365 OAuth (XOAUTH2). Blank = reuse the ENTRA_* sign-in app from .env.
+    "oauth_tenant_id": "", "oauth_client_id": "", "oauth_client_secret": "",
 }
 MAX_ATTEMPTS = 6
 TICKET_RX = re.compile(r"\[(TCK-\d{3,})\]")
@@ -123,6 +125,78 @@ def queue(db, to: str, subject: str, text: str, *, ticket_id: int | None = None,
     return row
 
 
+
+# --------------------------------------------------- Microsoft 365 OAuth
+# Exchange Online no longer accepts a password for IMAP, and is retiring it for
+# SMTP AUTH. XOAUTH2 with an app-only token (client credentials) works for both.
+# The app registration needs Office 365 Exchange Online application permissions
+# IMAP.AccessAsApp and/or SMTP.SendAsApp, admin consent, and the mailbox granted
+# to the app's Exchange service principal (see SERVER-STEPS.md).
+_TOKEN: dict = {}
+_TOKEN_LOCK = threading.Lock()
+_OUTLOOK_SCOPE = "https://outlook.office365.com/.default"
+
+
+def _oauth_creds(s: dict) -> tuple[str, str, str]:
+    tenant = (s.get("oauth_tenant_id") or config.ENTRA_TENANT_ID or "").strip()
+    client = (s.get("oauth_client_id") or config.ENTRA_CLIENT_ID or "").strip()
+    secret = (s.get("oauth_client_secret") or config.ENTRA_CLIENT_SECRET or "").strip()
+    if not (tenant and client and secret):
+        raise RuntimeError("Microsoft 365 OAuth needs a tenant id, client id and client secret. "
+                           "Fill them on this screen, or set ENTRA_TENANT_ID / ENTRA_CLIENT_ID / "
+                           "ENTRA_CLIENT_SECRET in .env.")
+    return tenant, client, secret
+
+
+def oauth_token(s: dict) -> str:
+    """App-only access token for outlook.office365.com, cached until 5 minutes
+    before it expires."""
+    import json
+    import urllib.parse
+    import urllib.request
+    tenant, client, secret = _oauth_creds(s)
+    key = (tenant, client)
+    with _TOKEN_LOCK:
+        cached = _TOKEN.get(key)
+        if cached and cached[1] > time.time() + 300:
+            return cached[0]
+        body = urllib.parse.urlencode({
+            "grant_type": "client_credentials", "client_id": client,
+            "client_secret": secret, "scope": _OUTLOOK_SCOPE}).encode()
+        req = urllib.request.Request(
+            f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+            data=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                tok = json.loads(r.read().decode())
+        except Exception as e:  # noqa: BLE001
+            detail = ""
+            if hasattr(e, "read"):
+                try:
+                    detail = json.loads(e.read().decode()).get("error_description", "")[:300]
+                except Exception:
+                    detail = ""
+            raise RuntimeError("Microsoft refused to issue a mail token. " + (detail or str(e)))
+        _TOKEN[key] = (tok["access_token"], time.time() + int(tok.get("expires_in", 3600)))
+        return tok["access_token"]
+
+
+def xoauth2_string(user: str, token: str) -> str:
+    return f"user={user}\x01auth=Bearer {token}\x01\x01"
+
+
+def imap_connect(s: dict):
+    """Open and sign in to the IMAP mailbox with whichever method is configured."""
+    port = int(s.get("imap_port") or 993)
+    box = imaplib.IMAP4_SSL(s["imap_host"], port, ssl_context=ssl.create_default_context())
+    if (s.get("imap_auth") or "password") == "oauth":
+        token = oauth_token(s)
+        box.authenticate("XOAUTH2", lambda _: xoauth2_string(s["imap_user"], token).encode())
+    else:
+        box.login(s["imap_user"], s.get("imap_password") or "")
+    return box
+
+
 def _smtp(s: dict):
     port = int(s.get("smtp_port") or 587)
     mode = (s.get("smtp_security") or "starttls").lower()
@@ -135,7 +209,11 @@ def _smtp(s: dict):
         if mode == "starttls":
             conn.starttls(context=ctx)
             conn.ehlo()
-    if s.get("smtp_user"):
+    if (s.get("smtp_auth") or "password") == "oauth":
+        token = oauth_token(s)
+        conn.auth("XOAUTH2", lambda challenge=None: xoauth2_string(s["smtp_user"], token),
+                  initial_response_ok=True)
+    elif s.get("smtp_user"):
         conn.login(s["smtp_user"], s.get("smtp_password") or "")
     return conn
 
@@ -232,9 +310,14 @@ def test_connection(db, to: str) -> str:
 def _explain(e: Exception) -> str:
     """The failures people actually hit, in words they can act on."""
     if isinstance(e, smtplib.SMTPAuthenticationError):
+        if "XOAUTH2" in str(e) or "5.7.3" in str(e):
+            return ("Microsoft accepted the token but the mailbox refused it. Check that the "
+                    "app has SMTP.SendAsApp permission with admin consent and that the mailbox "
+                    "was granted to the app's Exchange service principal (SERVER-STEPS.md).")
         return ("The mail server refused the user name or password. For Microsoft 365 "
                 "and Gmail this usually needs an app password, and SMTP AUTH switched on "
-                "for the mailbox.")
+                "for the mailbox. If Microsoft says basic authentication is disabled, switch "
+                "Authentication to Microsoft 365 (OAuth).")
     if isinstance(e, (TimeoutError, ConnectionRefusedError)) or "timed out" in str(e):
         return ("Could not reach the mail server. Check the host and port, and that "
                 "the server's firewall allows outgoing connections on that port.")
@@ -457,11 +540,9 @@ def poll_inbox(db) -> dict:
     s = get_settings(db, reveal=True)
     if not receiving_ready(s):
         return {"read": 0, "skipped": "not configured"}
-    port = int(s.get("imap_port") or 993)
-    box = imaplib.IMAP4_SSL(s["imap_host"], port, ssl_context=ssl.create_default_context())
+    box = imap_connect(s)
     counts = {"read": 0, "posted": 0, "ignored": 0, "refused": 0}
     try:
-        box.login(s["imap_user"], s.get("imap_password") or "")
         box.select(s.get("imap_folder") or "INBOX")
         typ, data = box.search(None, "UNSEEN")
         for num in (data[0].split() if data and data[0] else [])[:50]:

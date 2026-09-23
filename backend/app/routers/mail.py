@@ -58,10 +58,8 @@ def test_imap(caller: Caller = Depends(require_admin)):
     if not (s.get("imap_host") and s.get("imap_user")):
         raise HTTPException(409, "Set the IMAP server and mailbox user first.")
     try:
-        box = imaplib.IMAP4_SSL(s["imap_host"], int(s.get("imap_port") or 993),
-                                ssl_context=ssl.create_default_context())
+        box = MAIL.imap_connect(s)
         try:
-            box.login(s["imap_user"], s.get("imap_password") or "")
             typ, _ = box.select(s.get("imap_folder") or "INBOX", readonly=True)
             if typ != "OK":
                 raise RuntimeError(f"The folder {s.get('imap_folder')} does not exist")
@@ -73,8 +71,13 @@ def test_imap(caller: Caller = Depends(require_admin)):
             except Exception:
                 pass
     except imaplib.IMAP4.error as e:
-        raise HTTPException(502, "The mailbox refused the user name or password. Microsoft 365 "
-                                 f"and Gmail usually need an app password. ({e})")
+        if (s.get("imap_auth") or "password") == "oauth":
+            raise HTTPException(502, "Microsoft issued a token but the mailbox refused it. Check "
+                                     "IMAP.AccessAsApp permission with admin consent, and that the "
+                                     f"mailbox was granted to the app's service principal. ({e})")
+        raise HTTPException(502, "The mailbox refused the user name or password. Microsoft 365 no "
+                                 "longer allows password sign-in for IMAP: switch Authentication to "
+                                 f"Microsoft 365 (OAuth). Gmail needs an app password. ({e})")
     except Exception as e:
         raise HTTPException(502, f"Could not open the mailbox: {type(e).__name__}: {e}")
     return {"message": f"Signed in. {unseen} unread message{'' if unseen == 1 else 's'} in "
