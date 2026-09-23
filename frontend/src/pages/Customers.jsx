@@ -183,14 +183,20 @@ export default function Customers() {
                 follow the team's replies and reply back — and nothing else.</p>
 
               <AddPerson customer={sel} roles={roles} busy={busy}
-                         onAdded={async (r) => { setIssued(r); setMsg(r.message); await load(sel.id) }}
+                         onAdded={async (r) => {
+                           setIssued(r)
+                           if (r.email_note && !r.emailed) { setErr(r.email_note); setMsg(`${r.user.display_name} added.`) }
+                           else setMsg(r.message)
+                           await load(sel.id)
+                         }}
                          onError={setErr} />
               {issued && issued.temporary_password && (
                 <div className="issued">
                   <div>
                     <b>Password for {issued.user.display_name}</b>
-                    <span>Shown once and not stored. Pass it on privately — they will be asked
-                      to replace it when they first sign in.</span>
+                    <span>{issued.emailed
+                      ? `Also emailed to ${issued.user.email || 'them'}. Shown once and not stored — they will be asked to replace it when they first sign in.`
+                      : 'Shown once and not stored. Pass it on privately — they will be asked to replace it when they first sign in.'}</span>
                   </div>
                   <code>{issued.temporary_password}</code>
                   <button type="button" onClick={() => {
@@ -227,9 +233,13 @@ export default function Customers() {
                             <button type="button" disabled={busy} onClick={async () => {
                               setErr(''); setBusy(true)
                               try {
+                                setMsg('')
                                 const r = await api.resetPassword(u.id)
-                                setIssued({ user: { display_name: u.display_name },
-                                            temporary_password: r.temporary_password })
+                                setIssued({ user: { display_name: u.display_name, email: u.email },
+                                            temporary_password: r.temporary_password,
+                                            emailed: r.emailed })
+                                if (r.emailed) setMsg(r.email_note)
+                                else if (r.email_note) setErr(r.email_note)
                                 await load(sel.id)
                               } catch (e) { setErr(e.message) } finally { setBusy(false) }
                             }}>Reset password</button>
@@ -265,7 +275,8 @@ export default function Customers() {
 
 /**
  * Add a person to this customer. A password is generated unless one is typed,
- * shown once, and has to be replaced at first sign-in.
+ * shown once, emailed to their work email with the sign-in link (unless
+ * unticked), and has to be replaced at first sign-in.
  */
 function AddPerson({ customer, roles, busy, onAdded, onError }) {
   const [open, setOpen] = useState(false)
@@ -273,6 +284,7 @@ function AddPerson({ customer, roles, busy, onAdded, onError }) {
   const [email, setEmail] = useState('')
   const [roleId, setRoleId] = useState('')
   const [pw, setPw] = useState('')
+  const [sendMail, setSendMail] = useState(true)
   const [saving, setSaving] = useState(false)
   // this customer's own roles first, then the shared ones
   const mine = roles.filter(r => r.customerId === customer.id || r.customer_id === customer.id)
@@ -295,8 +307,9 @@ function AddPerson({ customer, roles, busy, onAdded, onError }) {
     try {
       const r = await api.addCustomerUser(customer.id, {
         display_name: name.trim(), email: email.trim(),
-        role_id: roleId ? Number(roleId) : null, password: pw || null })
-      setName(''); setEmail(''); setPw(''); setRoleId(''); setOpen(false)
+        role_id: roleId ? Number(roleId) : null, password: pw || null,
+        send_email: sendMail })
+      setName(''); setEmail(''); setPw(''); setRoleId(''); setSendMail(true); setOpen(false)
       onAdded(r)
     } catch (e2) { onError(e2.message) } finally { setSaving(false) }
   }
@@ -324,6 +337,12 @@ function AddPerson({ customer, roles, busy, onAdded, onError }) {
         <button type="button" onClick={() => setOpen(false)}>Cancel</button>
         <small className="muted">They will be asked to choose their own password on first sign-in.</small>
       </div>
+      <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8,
+                      marginTop: 10, fontWeight: 400, fontSize: 13 }}>
+        <input type="checkbox" checked={sendMail} style={{ width: 'auto', margin: 0 }}
+               onChange={e => setSendMail(e.target.checked)} />
+        Email the sign-in link, user and password to their work email
+      </label>
     </form>
   )
 }

@@ -412,7 +412,8 @@ def create_local_user(body: dict = Body(...), caller: Caller = Depends(require_a
 
 
 @router.post("/users/{uid}/reset-password")
-def reset_password(uid: int, caller: Caller = Depends(require_admin)):
+def reset_password(uid: int, body: dict = Body(default={}),
+                   caller: Caller = Depends(require_admin)):
     """Issue a new one-time password for a local account.
 
     The password is returned once and not kept: only its hash is stored. The
@@ -429,7 +430,13 @@ def reset_password(uid: int, caller: Caller = Depends(require_admin)):
     u.password_hash = hash_password(temp)
     u.must_change_password = 1
     db.commit()
-    return {"user": _user_out(u, db), "temporary_password": temp}
+    emailed, note = False, ""
+    if (body or {}).get("send_email", True):
+        from ..services import mail as MAIL
+        emailed, note = MAIL.send_login_details(db, to=u.email, name=u.display_name or u.email,
+                                                password=temp, reset=True)
+    return {"user": _user_out(u, db), "temporary_password": temp,
+            "emailed": emailed, "email_note": note}
 
 
 def _temp_password() -> str:

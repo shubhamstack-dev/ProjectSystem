@@ -327,6 +327,92 @@ def _explain(e: Exception) -> str:
     return f"{type(e).__name__}: {e}"
 
 
+# ------------------------------------------------- sign-in details
+# Used when app_url is blank on the Email screen, so a welcome mail never goes
+# out without a link to sign in.
+DEFAULT_APP_URL = "https://nexdaequmsupport.com"
+
+
+def app_url(s: dict) -> str:
+    return ((s.get("app_url") or "").strip() or DEFAULT_APP_URL).rstrip("/")
+
+
+def send_login_details(db, *, to: str, name: str, password: str,
+                       customer_name: str = "", reset: bool = False) -> tuple[bool, str]:
+    """Email a person the address to sign in at, their user name and password.
+
+    Sent at once, not through the outbox: the outbox keeps the body in clear
+    and a password must not sit in the database. The outbox row is still
+    written, as the record of who was sent what, with the password blanked.
+    A failure never undoes the account; the caller shows the password on
+    screen instead so it can be passed on by hand.
+    """
+    s = get_settings(db, reveal=True)
+    if not sending_ready(s):
+        return False, ("Email is not set up (Email screen: SMTP server and From address), "
+                       "so nothing was sent.")
+    url = app_url(s)
+    if reset:
+        subject = "Your Aequm ProjectSystem password has been reset"
+        lead = "Your password for Aequm ProjectSystem has been reset. Sign in with the details below."
+    else:
+        subject = "Your Aequm ProjectSystem account"
+        lead = ("An account has been created for you on Aequm ProjectSystem"
+                + (f" for {customer_name}" if customer_name else "")
+                + ". You can raise tickets on your projects there, follow the team's "
+                  "replies and reply back.")
+    after = "You will be asked to choose your own password when you first sign in."
+
+    def text_for(pw: str) -> str:
+        return (f"Hello {name},\n\n{lead}\n\n"
+                f"Sign in at: {url}/\n"
+                f"User:       {to}\n"
+                f"Password:   {pw}\n\n{after}\n")
+
+    def html_for(pw: str) -> str:
+        e = html.escape
+        cell = 'style="padding:6px 12px 6px 0;color:#6b7280"'
+        val = 'style="padding:6px 0;font-family:Consolas,monospace;font-size:14px"'
+        return f"""<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#1A1B3A;max-width:620px">
+<div style="border-bottom:3px solid #F15A29;padding-bottom:8px;margin-bottom:14px;font-weight:600;color:#2B3990">
+Aequm ProjectSystem</div>
+<p style="margin:0 0 12px">Hello {e(name)},</p>
+<p style="margin:0 0 14px">{e(lead)}</p>
+<table style="background:#F4F4F9;border-left:3px solid #2B3990;padding:10px 14px;margin:0 0 14px;border-collapse:separate">
+<tr><td {cell}>Sign in at</td><td {val}><a href="{e(url)}/" style="color:#2B3990">{e(url)}/</a></td></tr>
+<tr><td {cell}>User</td><td {val}>{e(to)}</td></tr>
+<tr><td {cell}>Password</td><td {val}><b>{e(pw)}</b></td></tr>
+</table>
+<p style="margin:0 0 12px">{e(after)}</p>
+<p><a href="{e(url)}/" style="display:inline-block;background:#2B3990;color:#fff;text-decoration:none;padding:9px 18px;border-radius:6px">Sign in</a></p>
+</div>"""
+
+    hidden = "(not kept)"
+    row = M.EmailOutbox(to_address=to, subject=subject, body_text=text_for(hidden),
+                        body_html=html_for(hidden), reason="reset" if reset else "welcome",
+                        status="sending", attempts=1, created_at_utc=_now())
+    db.add(row)
+    db.commit()
+    real = M.EmailOutbox(to_address=to, subject=subject, body_text=text_for(password),
+                         body_html=html_for(password))
+    try:
+        conn = _smtp(s)
+        try:
+            conn.send_message(_message(s, real))
+        finally:
+            try:
+                conn.quit()
+            except Exception:
+                pass
+    except Exception as e:  # noqa: BLE001
+        row.status, row.last_error = "failed", f"{type(e).__name__}: {e}"[:500]
+        db.commit()
+        return False, "The email could not be sent. " + _explain(e)
+    row.status, row.sent_at_utc = "sent", _now()
+    db.commit()
+    return True, f"Sign-in details emailed to {to}."
+
+
 # ------------------------------------------------------- what gets sent
 def _link(s: dict, t: M.Ticket) -> str:
     base = (s.get("app_url") or "").rstrip("/")

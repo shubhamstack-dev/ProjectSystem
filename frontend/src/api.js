@@ -146,7 +146,7 @@ export const api = {
   setCustomerRoles: (id, roleIds) =>
     call('PUT', `/api/customers/${id}/roles`, { role_ids: roleIds }),
   addCustomerUser: (id, body) => call('POST', `/api/customers/${id}/users/new`, body),
-  resetPassword: (uid) => call('POST', `/api/auth/users/${uid}/reset-password`),
+  resetPassword: (uid, body = { send_email: true }) => call('POST', `/api/auth/users/${uid}/reset-password`, body),
   setCustomerUsers: (id, userIds) =>
     call('PUT', `/api/customers/${id}/users`, { user_ids: userIds }),
   unassignedGuests: () => call('GET', '/api/customers/unassigned'),

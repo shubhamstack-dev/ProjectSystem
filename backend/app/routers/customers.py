@@ -381,8 +381,19 @@ def add_user(cid: int, body: dict = Body(...), caller: Caller = Depends(require_
     audit_record(db, caller.actor, "Create", "Customer user", f"{name} <{email}>",
                  f"{c.code} {c.name}, role {role.name}")
     db.commit()
+
+    # Email them where to sign in, their user name and the password. On by
+    # default; the account stands whether or not the mail goes out.
+    emailed, note = False, ""
+    if body.get("send_email", True):
+        from ..services import mail as MAIL
+        emailed, note = MAIL.send_login_details(db, to=email, name=name, password=temp,
+                                                customer_name=c.name)
+    msg = f"{name} can now sign in with {email}. "
+    msg += note + " " if note else ""
+    msg += "They will be asked to choose their own password first."
     return {"customer": _out(db, c),
             "user": {"id": u.id, "display_name": name, "email": email, "role": role.name},
             "temporary_password": None if given else temp,
-            "message": (f"{name} can now sign in with {email}. "
-                        + ("They will be asked to choose their own password first."))}
+            "emailed": emailed, "email_note": note,
+            "message": msg}
